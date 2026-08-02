@@ -655,6 +655,86 @@ pub fn test_sighash_basic() -> bool {
 }
 
 #[cfg(any(test, feature = "verbose-boot"))]
+fn decode_hex<const N: usize>(hex: &[u8]) -> Option<[u8; N]> {
+    if hex.len() != N * 2 {
+        return None;
+    }
+    let mut out = [0u8; N];
+    let nibble = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
+    for i in 0..N {
+        out[i] = (nibble(hex[i * 2])? << 4) | nibble(hex[i * 2 + 1])?;
+    }
+    Some(out)
+}
+
+/// Exact `native-all-0` vector from the official rusty-kaspa consensus
+/// implementation. Unlike a round-trip test, the expected digest was not
+/// produced by KasSigner's own code.
+#[cfg(any(test, feature = "verbose-boot"))]
+pub fn test_official_rusty_kaspa_sighash_vector() -> bool {
+    let txid = match decode_hex::<32>(
+        b"880eb9819a31821d9d2399e2f35e2433b72637e393d71ecc9b8d0250f49153c3",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+    let script_1 = match decode_hex::<34>(
+        b"208325613d2eeaf7176ac6c670b13c0043156c427438ed72d74b7800862ad884e8ac",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+    let script_2 = match decode_hex::<34>(
+        b"20fcef4c106cf11135bbd70f02a726a92162d2fb8b22f0469126f800862ad884e8ac",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+    let expected = match decode_hex::<32>(
+        b"03b7ac6927b2b67100734c3cc313ff8c2e8b3ce3e746d46dd660b706a916b1f5",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+
+    let mut tx = Transaction::new();
+    tx.version = 0;
+    tx.num_inputs = 3;
+    tx.num_outputs = 2;
+    tx.locktime = 1_615_462_089_000;
+
+    for i in 0..3 {
+        tx.inputs[i].previous_outpoint.transaction_id = txid;
+        tx.inputs[i].previous_outpoint.index = i as u32;
+        tx.inputs[i].sequence = i as u64;
+        tx.inputs[i].sig_op_count = 0;
+        tx.inputs[i].utxo_entry.amount = ((i + 1) * 100) as u64;
+        let script = if i == 0 { &script_1 } else { &script_2 };
+        tx.inputs[i].utxo_entry.script_public_key.version = 0;
+        tx.inputs[i].utxo_entry.script_public_key.script[..34].copy_from_slice(script);
+        tx.inputs[i].utxo_entry.script_public_key.script_len = 34;
+    }
+
+    tx.outputs[0].value = 300;
+    tx.outputs[0].script_public_key.version = 0;
+    tx.outputs[0].script_public_key.script[..34].copy_from_slice(&script_2);
+    tx.outputs[0].script_public_key.script_len = 34;
+    tx.outputs[1].value = 300;
+    tx.outputs[1].script_public_key.version = 0;
+    tx.outputs[1].script_public_key.script[..34].copy_from_slice(&script_1);
+    tx.outputs[1].script_public_key.script_len = 34;
+
+    calculate_sighash(&tx, 0, SigHashType::All) == expected
+}
+
+#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: different inputs produce different sighashes.
 pub fn test_sighash_different_inputs() -> bool {
     // Transaction with 2 inputs — each must have a different sighash
@@ -793,8 +873,9 @@ pub fn test_format_kas() -> bool {
 /// Run all sighash test vectors.
 pub fn run_sighash_tests() -> (u32, u32) {
     let mut passed = 0u32;
-    let total = 5u32;
+    let total = 6u32;
 
+    if test_official_rusty_kaspa_sighash_vector() { passed += 1; }
     if test_keyed_differs() { passed += 1; }
     if test_sighash_basic() { passed += 1; }
     if test_sighash_different_inputs() { passed += 1; }

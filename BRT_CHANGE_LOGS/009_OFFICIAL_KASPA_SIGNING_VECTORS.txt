@@ -1,0 +1,49 @@
+KASSIGNER SECURITY FIX RECORD 009
+
+Finding:
+Custom Kaspa sighash and Schnorr code lacked independent official vectors
+
+Severity:
+Medium, with a stronger implementation concern discovered during remediation
+
+Branch:
+fix/official-signing-vectors
+
+Affected files:
+bootloader/Cargo.toml
+bootloader/Cargo.lock
+bootloader/src/wallet/schnorr.rs
+bootloader/src/wallet/sighash.rs
+
+Problem before:
+Schnorr tests signed with KasSigner's code and then verified with KasSigner's
+code. Sighash tests checked only properties such as nonzero, deterministic, or
+different outputs. Those tests could pass when the implementation disagreed
+with Kaspa consensus. The custom Schnorr signer used a nonstandard simplified
+nonce procedure instead of a reviewed BIP340 implementation.
+
+Fix after:
+Schnorr signing and verification use k256's no-std BIP340 implementation,
+including BIP340 tagged hashing and standard nonce derivation. Signing uses the
+standard all-zero auxiliary-randomness input, producing deterministic,
+consensus-valid signatures.
+
+Independent vectors added:
+1. Official BIP340 signing vector 0 checks the public key, exact 64-byte
+   signature, and verification result.
+2. Rusty Kaspa consensus vector "native-all-0" constructs the same three-input,
+   two-output transaction and requires the exact official sighash:
+   03b7ac6927b2b67100734c3cc313ff8c2e8b3ce3e746d46dd660b706a916b1f5
+
+Reference sources:
+https://github.com/bitcoin/bips/blob/master/bip-0340/test-vectors.csv
+https://github.com/kaspanet/rusty-kaspa/blob/master/consensus/core/src/hashing/sighash.rs
+
+Verification:
+Cargo checks passed for Waveshare and M5Stack in normal, verbose-boot, and
+production configurations.
+
+Physical verification still required:
+Flash a verbose-boot M5Stack build and confirm the boot report shows all five
+Schnorr tests and all six sighash tests passing. This executes the exact vectors
+on the target architecture rather than merely compiling them.

@@ -21,7 +21,7 @@
 //   - secp256k1 curve (via crate k256, pure Rust)
 //   - Public keys: x-only 32 bytes (BIP-340 style)
 //   - Signatures: 64 bytes (R.x || s)
-//   - Nonce generation: RFC6979 deterministic (no TRNG needed for signing)
+//   - BIP340 tagged hashes and nonce derivation via k256's audited implementation
 //
 // Kaspa uses Schnorr over secp256k1 similar to Bitcoin BIP340.
 // The main difference is in the sighash hash (Blake2b vs SHA256),
@@ -30,25 +30,16 @@
 // This implementation signs a 32-byte message (the pre-computed sighash).
 //
 // Security:
-//   - Deterministic nonce (RFC6979) → no TRNG needed for signing
-//   - The private key is zeroized after each operation
+//   - BIP340 deterministic signing with an all-zero auxiliary-randomness input
+//   - k256's SigningKey zeroizes private key material on drop
 //   - No heap/alloc used
 
 
 use k256::{
+    elliptic_curve::sec1::ToEncodedPoint,
+    schnorr::{Signature as K256SchnorrSignature, SigningKey, VerifyingKey},
     SecretKey,
-    elliptic_curve::{
-        sec1::ToEncodedPoint,
-        ops::Reduce,
-        ScalarPrimitive,
-    },
-    Scalar,
-    ProjectivePoint,
-    AffinePoint,
-    Secp256k1,
 };
-use sha2::{Sha256, Digest};
-use super::hmac::{hmac_sha512, zeroize_buf};
 
 // ─── Types ────────────────────────────────────────────────────────────
 
@@ -89,15 +80,7 @@ pub enum SchnorrError {
 
 // ─── Sign ────────────────────────────────────────────────────────────
 
-/// Sign a 32-byte message with Schnorr (BIP340-like).
-///
-/// Algorithm:
-///   1. d = private key. If P = d*G has odd Y, d = n - d
-///   2. k = deterministic nonce (RFC6979 with SHA256)
-///   3. R = k*G. If R.y is odd, k = n - k
-///   4. e = SHA256(R.x || P.x || message) mod n
-///   5. s = (k + e * d) mod n
-///   6. Signature = R.x || s
+/// Sign a 32-byte precomputed Kaspa sighash with standard BIP340 Schnorr.
 ///
 /// `message` must be the 32-byte sighash (pre-computed by the KSPT module).
 /// `private_key` is the 32-byte BIP32 private key.
@@ -105,55 +88,14 @@ pub fn schnorr_sign(
     private_key: &[u8; 32],
     message: &[u8; 32],
 ) -> Result<SchnorrSignature, SchnorrError> {
-    // 1. Parse private key
-    let sk = SecretKey::from_slice(private_key)
+    let signing_key = SigningKey::from_bytes(private_key)
         .map_err(|_| SchnorrError::InvalidPrivateKey)?;
-
-    let d_scalar: Scalar = *sk.to_nonzero_scalar();
-
-    // Get public key point
-    let pubkey_point = ProjectivePoint::GENERATOR * d_scalar;
-    let pubkey_affine = pubkey_point.to_affine();
-
-    // BIP340: if Y is odd, negate d
-    let d = if has_even_y(&pubkey_affine) {
-        d_scalar
-    } else {
-        d_scalar.negate()
-    };
-
-    // x-only public key (32 bytes)
-    let px = x_bytes(&pubkey_affine);
-
-    // 2. Deterministic nonce (RFC6979-like using HMAC-SHA256)
-    let k_scalar = generate_rfc6979_nonce(private_key, message)?;
-
-    // 3. R = k*G
-    let r_point = (ProjectivePoint::GENERATOR * k_scalar).to_affine();
-
-    // If R.y is odd, negate k
-    let k = if has_even_y(&r_point) {
-        k_scalar
-    } else {
-        k_scalar.negate()
-    };
-
-    let rx = x_bytes(&r_point);
-
-    // 4. e = SHA256(R.x || P.x || message) mod n
-    //    (BIP340 uses tagged hash, but for Kaspa compatibility
-    //     we use the challenge hash per their implementation)
-    let e = compute_challenge(&rx, &px, message);
-
-    // 5. s = k + e * d (mod n)
-    let s = k + (e * d);
-
-    // 6. Serialize: R.x || s
-    let mut sig_bytes = [0u8; 64];
-    sig_bytes[..32].copy_from_slice(&rx);
-    sig_bytes[32..].copy_from_slice(&scalar_to_bytes(&s));
-
-    Ok(SchnorrSignature { bytes: sig_bytes })
+    let signature = signing_key
+        .sign_raw(message, &[0u8; 32])
+        .map_err(|_| SchnorrError::InvalidNonce)?;
+    Ok(SchnorrSignature {
+        bytes: signature.to_bytes(),
+    })
 }
 
 // ─── Verification ─────────────────────────────────────────────────────
@@ -170,162 +112,80 @@ pub fn schnorr_verify(
     message: &[u8; 32],
     signature: &SchnorrSignature,
 ) -> Result<(), SchnorrError> {
-    let rx = signature.r_bytes();
-    let s_bytes = signature.s_bytes();
-
-    // Parse s as scalar
-    let s = bytes_to_scalar(s_bytes).ok_or(SchnorrError::InvalidSignature)?;
-
-    // Reconstruct public key point from x-only (assume even Y)
-    let pubkey_point = lift_x(pubkey_x).ok_or(SchnorrError::InvalidSignature)?;
-
-    // e = challenge hash
-    let e = compute_challenge(rx, pubkey_x, message);
-
-    // R' = s*G - e*P
-    let r_computed = (ProjectivePoint::GENERATOR * s)
-        - (ProjectivePoint::from(pubkey_point) * e);
-    let r_affine = r_computed.to_affine();
-
-    // Check: R'.x == R.x and R'.y is even
-    if !has_even_y(&r_affine) {
-        return Err(SchnorrError::InvalidSignature);
-    }
-
-    let r_computed_x = x_bytes(&r_affine);
-    if r_computed_x != *rx {
-        return Err(SchnorrError::InvalidSignature);
-    }
-
-    Ok(())
-}
-
-// ─── Helper functions ─────────────────────────────────────────────
-
-/// Checks if the point has an even Y coordinate.
-fn has_even_y(point: &AffinePoint) -> bool {
-    let encoded = point.to_encoded_point(false); // uncompressed: 04 || x || y
-    let y_bytes = encoded.y().expect("not identity");
-    // Y is even if the last byte is even
-    y_bytes[31] & 1 == 0
-}
-
-/// Extracts the 32-byte X coordinate from a point.
-fn x_bytes(point: &AffinePoint) -> [u8; 32] {
-    let encoded = point.to_encoded_point(true); // compressed: 02/03 || x
-    let mut x = [0u8; 32];
-    x.copy_from_slice(&encoded.as_bytes()[1..33]);
-    x
-}
-
-/// Compute the BIP-340 challenge: e = tagged_hash("BIP0340/challenge", R.x || P.x || message) mod n
-///
-/// BIP-340 tagged hash: SHA256(SHA256(tag) || SHA256(tag) || data)
-/// The tag hash is precomputed as a constant for performance.
-fn compute_challenge(rx: &[u8; 32], px: &[u8; 32], message: &[u8; 32]) -> Scalar {
-    // Precomputed: SHA256("BIP0340/challenge")
-    // = 7bb52d7a9fef58323eb1bf7a407db382d2f3f2d81bb1224f49fe518f6d48d37c
-    const TAG_HASH: [u8; 32] = [
-        0x7b, 0xb5, 0x2d, 0x7a, 0x9f, 0xef, 0x58, 0x32,
-        0x3e, 0xb1, 0xbf, 0x7a, 0x40, 0x7d, 0xb3, 0x82,
-        0xd2, 0xf3, 0xf2, 0xd8, 0x1b, 0xb1, 0x22, 0x4f,
-        0x49, 0xfe, 0x51, 0x8f, 0x6d, 0x48, 0xd3, 0x7c,
-    ];
-
-    let mut hasher = Sha256::new();
-    hasher.update(TAG_HASH);  // SHA256("BIP0340/challenge") — first copy
-    hasher.update(TAG_HASH);  // SHA256("BIP0340/challenge") — second copy
-    hasher.update(rx);
-    hasher.update(px);
-    hasher.update(message);
-    let hash = hasher.finalize();
-
-    let mut hash_bytes = [0u8; 32];
-    hash_bytes.copy_from_slice(&hash);
-
-    // Reduce mod n
-    bytes_to_scalar_reduce(&hash_bytes)
-}
-
-/// Generate a deterministic nonce using RFC6979 (simplified with HMAC-SHA512).
-///
-/// k = HMAC-SHA512(private_key, SHA256(message))[0..32] mod n
-///
-/// This is a simplification. Full RFC6979 uses a loop with
-/// V/K states, but for Schnorr signatures with 32-byte messages
-/// (which are hashes), a single iteration is safe in practice.
-fn generate_rfc6979_nonce(
-    private_key: &[u8; 32],
-    message: &[u8; 32],
-) -> Result<Scalar, SchnorrError> {
-    // Build data for HMAC: private_key || message
-    let mut data = [0u8; 64];
-    data[..32].copy_from_slice(private_key);
-    data[32..].copy_from_slice(message);
-
-    let hmac_out = hmac_sha512(&data[..32], &data[32..]);
-
-    zeroize_buf(&mut data);
-
-    // Take first 32 bytes and reduce mod n
-    let mut k_bytes = [0u8; 32];
-    k_bytes.copy_from_slice(&hmac_out[..32]);
-
-    let k = bytes_to_scalar_reduce(&k_bytes);
-    zeroize_buf(&mut k_bytes);
-
-    // k cannot be zero
-    if k.is_zero().into() {
-        return Err(SchnorrError::InvalidNonce);
-    }
-
-    Ok(k)
-}
-
-/// Convert 32 bytes big-endian to Scalar (returns None if >= n).
-fn bytes_to_scalar(bytes: &[u8; 32]) -> Option<Scalar> {
-    let primitive = ScalarPrimitive::<Secp256k1>::from_slice(bytes).ok()?;
-    Some(Scalar::from(&primitive))
-}
-
-/// Convert 32 bytes big-endian to Scalar, reducing mod n.
-fn bytes_to_scalar_reduce(bytes: &[u8; 32]) -> Scalar {
-    let wide = k256::U256::from_be_slice(bytes);
-    <Scalar as Reduce<k256::U256>>::reduce(wide)
-}
-
-/// Convert a Scalar to 32 bytes big-endian.
-fn scalar_to_bytes(s: &Scalar) -> [u8; 32] {
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&s.to_bytes());
-    bytes
-}
-
-/// Reconstructs an AffinePoint from x-only (32 bytes), assuming even Y.
-/// Equivalent to BIP-340 "lift_x".
-fn lift_x(x_bytes: &[u8; 32]) -> Option<AffinePoint> {
-    // Build compressed encoding with prefix 0x02 (even Y)
-    let mut compressed = [0u8; 33];
-    compressed[0] = 0x02;
-    compressed[1..33].copy_from_slice(x_bytes);
-
-    // Parse as compressed point
-    use k256::elliptic_curve::sec1::FromEncodedPoint;
-    use k256::EncodedPoint;
-
-    let encoded = EncodedPoint::from_bytes(compressed).ok()?;
-    let point = AffinePoint::from_encoded_point(&encoded);
-    if point.is_some().into() {
-        // CtOption::unwrap() is safe here — we just checked is_some()
-        Some(point.expect("point verified is_some"))
-    } else {
-        None
-    }
+    let verifying_key = VerifyingKey::from_bytes(pubkey_x)
+        .map_err(|_| SchnorrError::InvalidSignature)?;
+    let parsed_signature = K256SchnorrSignature::try_from(signature.bytes.as_slice())
+        .map_err(|_| SchnorrError::InvalidSignature)?;
+    verifying_key
+        .verify_raw(message, &parsed_signature)
+        .map_err(|_| SchnorrError::InvalidSignature)
 }
 
 // ═══════════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════════
+
+#[cfg(any(test, feature = "verbose-boot"))]
+fn decode_hex<const N: usize>(hex: &[u8]) -> Option<[u8; N]> {
+    if hex.len() != N * 2 {
+        return None;
+    }
+    let mut out = [0u8; N];
+    let nibble = |b: u8| -> Option<u8> {
+        match b {
+            b'0'..=b'9' => Some(b - b'0'),
+            b'a'..=b'f' => Some(b - b'a' + 10),
+            b'A'..=b'F' => Some(b - b'A' + 10),
+            _ => None,
+        }
+    };
+    for i in 0..N {
+        out[i] = (nibble(hex[i * 2])? << 4) | nibble(hex[i * 2 + 1])?;
+    }
+    Some(out)
+}
+
+/// Official BIP340 vector 0, also exercised by the k256 implementation.
+/// Kaspa consensus uses this exact Schnorr signature scheme over its own
+/// precomputed Blake2b transaction sighash.
+#[cfg(any(test, feature = "verbose-boot"))]
+pub fn test_official_bip340_vector_0() -> bool {
+    let private_key = match decode_hex::<32>(
+        b"0000000000000000000000000000000000000000000000000000000000000003",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+    let message = [0u8; 32];
+    let expected_public_key = match decode_hex::<32>(
+        b"F9308A019258C31049344F85F89D5229B531C845836F99B08601F113BCE036F9",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+    let expected_signature = match decode_hex::<64>(
+        b"E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
+    ) {
+        Some(value) => value,
+        None => return false,
+    };
+
+    let signing_key = match SigningKey::from_bytes(&private_key) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    if signing_key.verifying_key().to_bytes().as_slice() != expected_public_key {
+        return false;
+    }
+
+    match schnorr_sign(&private_key, &message) {
+        Ok(signature) => {
+            signature.bytes == expected_signature
+                && schnorr_verify(&expected_public_key, &message, &signature).is_ok()
+        }
+        Err(_) => false,
+    }
+}
 
 /// Test: sign and verify roundtrip
 #[cfg(any(test, feature = "verbose-boot"))]
@@ -476,8 +336,9 @@ pub fn test_sign_with_bip32_key() -> bool {
 #[cfg(any(test, feature = "verbose-boot"))]
 pub fn run_schnorr_tests() -> (u32, u32) {
     let mut passed = 0u32;
-    let total = 4u32;
+    let total = 5u32;
 
+    if test_official_bip340_vector_0() { passed += 1; }
     if test_sign_verify_roundtrip() { passed += 1; }
     if test_deterministic_signature() { passed += 1; }
     if test_invalid_signature_fails() { passed += 1; }

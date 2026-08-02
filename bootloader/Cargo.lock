@@ -1148,6 +1148,7 @@ dependencies = [
  "ecdsa",
  "elliptic-curve",
  "sha2",
+ "signature",
 ]
 
 [[package]]
