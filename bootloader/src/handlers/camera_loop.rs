@@ -44,7 +44,6 @@ fn hex_nibble(b: u8) -> u8 {
     }
 }
 
-#[cfg(not(feature = "silent"))]
 // Static buffers for QR state (persist across calls)
 static mut FN: u32 = 0;
 // DB decode buffer: heap-allocated (PSRAM) to free ~76KB SRAM for stack.

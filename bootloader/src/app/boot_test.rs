@@ -39,7 +39,6 @@ fn rqrr_test_decode(img: &[u8], w: usize, h: usize) -> Option<alloc::vec::Vec<u8
     None
 }
 
-#[cfg(not(feature = "silent"))]
 /// Run all boot-time validation tests.
 pub fn run_boot_tests() {
     {

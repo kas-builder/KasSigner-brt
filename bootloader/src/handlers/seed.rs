@@ -27,7 +27,6 @@ use crate::ui::helpers::pp_keyboard_hit;
 // Helper functions from helpers.rs
 use crate::ui::helpers::{suggestion_hit_test, validate_mnemonic, compute_last_word};
 
-#[cfg(not(feature = "silent"))]
 fn hex_nibble(ch: u8) -> u8 {
     match ch {
         b'0'..=b'9' => ch - b'0',

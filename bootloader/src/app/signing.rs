@@ -39,7 +39,6 @@ fn zeroize_seed(buf: &mut [u8]) {
 use crate::hw::display::BootStatus;
 use crate::halt_forever;
 
-#[cfg(not(feature = "silent"))]
 /// Derive all 20 Kaspa pubkeys from the active seed into cache.
 pub fn derive_all_pubkeys(
     mnemonic_indices: &[u16; 24],

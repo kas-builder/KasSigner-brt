@@ -155,7 +155,7 @@ macro_rules! log {
 #[cfg(feature = "silent")]
 #[macro_export]
 macro_rules! log {
-    ($($arg:tt)*) => { };
+    ($($arg:tt)*) => {{ () }};
 }
 
 use features::verify::{FirmwareInfo, VerificationResult, FIRMWARE_START_ADDR, FIRMWARE_MAX_SIZE};

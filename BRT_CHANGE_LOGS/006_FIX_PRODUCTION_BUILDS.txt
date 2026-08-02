@@ -1,0 +1,54 @@
+KASSIGNER SECURITY FIX RECORD 006
+
+Finding:
+Production firmware configurations did not compile
+
+Severity:
+High
+
+Base branch:
+test/all-security-fixes
+
+Fix branch:
+fix/production-builds
+
+Problem:
+The production feature enables silent logging. The silent log macro did not
+produce a valid unit expression when used in match arms. Several application
+functions, state buffers, firmware constants, imports, and helpers were also
+incorrectly compiled only when silent logging was disabled. Production builds
+therefore lost code they still required.
+
+Before:
+The silent log macro expanded to an incomplete statement.
+Functional code was conditionally removed by cfg(not(feature = "silent")).
+Both Waveshare and M5Stack production builds failed.
+
+After:
+The silent log macro evaluates to the unit value ().
+Silent mode removes log output without removing functional application code.
+Firmware verification constants remain available in production.
+Menu, settings, steganography, signing, camera state, SD, and boot validation
+code remain compiled when logging is silent.
+
+Security effect:
+The strict production configuration can now be built for both supported
+hardware targets. This fix does not by itself prove firmware verification or
+hardware lockdown; those are reviewed and fixed separately.
+
+Verification commands:
+cargo build --release --no-default-features --features waveshare
+cargo build --release --no-default-features --features m5stack
+cargo build --release --no-default-features --features waveshare,verbose-boot
+cargo build --release --no-default-features --features m5stack,verbose-boot
+cargo build --release --no-default-features --features waveshare,production
+cargo build --release --no-default-features --features m5stack,production
+
+Expected result:
+All six configurations complete successfully.
+
+Physical testing still required:
+Boot the production firmware on each board and verify that startup, screen,
+touch, camera, SD, signing, failure screens, firmware verification, and USB
+shutdown behave correctly. Production images should not be flashed until the
+separate firmware verification fix has been completed and reviewed.

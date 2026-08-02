@@ -24,7 +24,6 @@ use crate::log;
 use crate::{app::data::AppData, hw::display, hw::sd_backup, hw::sdcard, hw::sound, ui::seed_manager, features::stego, hw::touch, wallet};
 use crate::ui::helpers::pp_keyboard_hit;
 
-#[cfg(not(feature = "silent"))]
 use crate::ui::helpers::validate_mnemonic;
 
 /// Shared state for stego touch handlers.

@@ -35,7 +35,6 @@
 // Init: Espressif gc0308_sensor_default_regs + subsample QVGA via Page 1 regs
 // Capture: Stock esp-hal Camera::receive()/wait() API, DMA to SRAM
 
-#[cfg(not(feature = "silent"))]
 use crate::log;
 use esp_hal::delay::Delay;
 

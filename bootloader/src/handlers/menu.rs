@@ -22,7 +22,6 @@ use crate::{app::data::AppData, hw::display, hw::sdcard, hw::sound, ui::setup_wi
 use esp_hal::lcd_cam::cam::Camera as DvpCamera;
 use esp_hal::dma::DmaRxBuf;
 
-#[cfg(not(feature = "silent"))]
 /// Handle touch events for menu screens (MainMenu, SeedsMenu, ToolsMenu, etc.).
 #[inline(never)]
 pub fn handle_menu_touch(
