@@ -560,6 +560,12 @@ pub fn page_label(&self) -> &'static str {
     }
 }
 
+impl Drop for PassphraseInput {
+    fn drop(&mut self) {
+        self.reset();
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Tests
 // ═══════════════════════════════════════════════════════════════════
@@ -703,6 +709,20 @@ pub fn test_passphrase_length_boundaries() -> bool {
 }
 
 #[cfg(any(test, feature = "verbose-boot"))]
+/// Test that passphrase input cancellation erases the full backing buffer.
+pub fn test_passphrase_input_zeroize() -> bool {
+    let mut input = PassphraseInput::new();
+    for byte in b"correct horse battery staple" {
+        input.push_char(*byte);
+    }
+    input.reset();
+    input.len == 0
+        && input.cursor == 0
+        && input.page == 0
+        && input.buf.iter().all(|byte| *byte == 0)
+}
+
+#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: a display-fingerprint collision does not merge different mnemonics.
 pub fn test_fingerprint_collision_does_not_merge_seeds() -> bool {
     let mut mgr = SeedManager::new();
@@ -746,7 +766,7 @@ pub fn test_fingerprint_collision_does_not_merge_seeds() -> bool {
 /// Run all seed manager tests.
 pub fn run_seed_manager_tests() -> (u32, u32) {
     let mut passed = 0u32;
-    let total = 7u32;
+    let total = 8u32;
 
     if test_seedqr_roundtrip_12() { passed += 1; }
     if test_seedqr_roundtrip_24() { passed += 1; }
@@ -754,6 +774,7 @@ pub fn run_seed_manager_tests() -> (u32, u32) {
     if test_fingerprint() { passed += 1; }
     if test_seed_manager_store_delete() { passed += 1; }
     if test_passphrase_length_boundaries() { passed += 1; }
+    if test_passphrase_input_zeroize() { passed += 1; }
     if test_fingerprint_collision_does_not_merge_seeds() { passed += 1; }
 
     (passed, total)

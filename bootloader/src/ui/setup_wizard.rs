@@ -200,6 +200,16 @@ impl DiceCollector {
         }
     }
 
+    /// Securely erase every recorded roll while preserving the selected
+    /// word count and target so the collector can be reused safely.
+    pub fn zeroize(&mut self) {
+        for roll in self.rolls.iter_mut() {
+            unsafe { core::ptr::write_volatile(roll, 0); }
+        }
+        unsafe { core::ptr::write_volatile(&mut self.count, 0); }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Check if we have enough rolls
     pub fn is_complete(&self) -> bool {
         self.count >= self.target
@@ -243,6 +253,12 @@ impl DiceCollector {
         entropy[..16].copy_from_slice(&hash1[..16]);
         entropy[16..].copy_from_slice(&hash2[..16]);
         Some(entropy)
+    }
+}
+
+impl Drop for DiceCollector {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -529,12 +545,19 @@ pub fn new() -> Self {
             e16.copy_from_slice(&entropy[..16]);
             let m = bip39::mnemonic_from_entropy_12(&e16);
             self.mnemonic[..12].copy_from_slice(&m.indices);
+            for byte in e16.iter_mut() {
+                unsafe { core::ptr::write_volatile(byte, 0); }
+            }
         } else {
             let mut e32 = [0u8; 32];
             e32.copy_from_slice(&entropy[..32]);
             let m = bip39::mnemonic_from_entropy_24(&e32);
             self.mnemonic[..24].copy_from_slice(&m.indices);
+            for byte in e32.iter_mut() {
+                unsafe { core::ptr::write_volatile(byte, 0); }
+            }
         }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 
     /// Generate mnemonic from completed dice rolls
@@ -543,18 +566,25 @@ pub fn new() -> Self {
             return false;
         }
         if self.word_count == 12 {
-            let Some(entropy) = self.dice.extract_entropy_16() else {
+            let Some(mut entropy) = self.dice.extract_entropy_16() else {
                 return false;
             };
             let m = bip39::mnemonic_from_entropy_12(&entropy);
             self.mnemonic[..12].copy_from_slice(&m.indices);
+            for byte in entropy.iter_mut() {
+                unsafe { core::ptr::write_volatile(byte, 0); }
+            }
         } else {
-            let Some(entropy) = self.dice.extract_entropy_32() else {
+            let Some(mut entropy) = self.dice.extract_entropy_32() else {
                 return false;
             };
             let m = bip39::mnemonic_from_entropy_24(&entropy);
             self.mnemonic[..24].copy_from_slice(&m.indices);
+            for byte in entropy.iter_mut() {
+                unsafe { core::ptr::write_volatile(byte, 0); }
+            }
         }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
         true
     }
     /// Serialize mnemonic indices to bytes for encryption
@@ -606,9 +636,7 @@ pub fn new() -> Self {
         for idx in self.mnemonic.iter_mut() {
             unsafe { core::ptr::write_volatile(idx, 0); }
         }
-        for roll in self.dice.rolls.iter_mut() {
-            unsafe { core::ptr::write_volatile(roll, 0); }
-        }
+        self.dice.zeroize();
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
 }
@@ -707,6 +735,20 @@ pub fn test_dice_max_overflow_and_undo() -> bool {
 }
 
 #[cfg(any(test, feature = "verbose-boot"))]
+/// Test that cancellation-style cleanup removes every recorded roll, not only
+/// the public progress counter.
+pub fn test_dice_zeroize() -> bool {
+    let mut dice = DiceCollector::new_12_word();
+    for value in 1..=6 {
+        if !dice.add_roll(value) {
+            return false;
+        }
+    }
+    dice.zeroize();
+    dice.count == 0 && dice.rolls.iter().all(|value| *value == 0)
+}
+
+#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: last word calculation for 12-word mnemonic.
 pub fn test_calc_last_word_12() -> bool {
     // "abandon" x11 → last word should be "about" (index 3)
@@ -765,12 +807,13 @@ pub fn test_word_input_matching() -> bool {
 /// Run all setup wizard tests.
 pub fn run_setup_tests() -> (u32, u32) {
     let mut passed = 0u32;
-    let total = 7u32;
+    let total = 8u32;
 
     if test_dice_target_validation() { passed += 1; }
     if test_dice_entropy_12_golden() { passed += 1; }
     if test_dice_entropy_24_golden() { passed += 1; }
     if test_dice_max_overflow_and_undo() { passed += 1; }
+    if test_dice_zeroize() { passed += 1; }
     if test_calc_last_word_12() { passed += 1; }
     if test_serialize_deserialize_mnemonic() { passed += 1; }
     if test_word_input_matching() { passed += 1; }

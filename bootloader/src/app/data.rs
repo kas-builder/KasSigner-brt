@@ -344,6 +344,25 @@ pub struct AppData {
     pub volume: u8,
 }
 
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+static PANIC_APP_DATA: AtomicPtr<AppData> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Register the one heap-resident application state object for best-effort
+/// targeted cleanup by the panic handler.
+pub fn register_for_panic_cleanup(ad: &mut AppData) {
+    PANIC_APP_DATA.store(ad as *mut AppData, Ordering::Release);
+}
+
+/// Called only by the panic handler. The pointer is registered once after the
+/// Box is allocated and remains valid for the firmware's lifetime.
+pub unsafe fn panic_zeroize_registered() {
+    let ptr = PANIC_APP_DATA.swap(core::ptr::null_mut(), Ordering::AcqRel);
+    if !ptr.is_null() {
+        (*ptr).zeroize_sensitive();
+    }
+}
+
 impl AppData {
         /// Create a new AppData with all fields at default/zero state.
 pub fn new() -> Self {
@@ -562,5 +581,88 @@ pub fn new() -> Self {
             #[cfg(feature = "m5stack")]
             volume: 18,
         }
+    }
+
+    /// Best-effort volatile wipe of long-lived secrets and secret-bearing
+    /// work buffers. Public display settings and menu state are untouched.
+    pub fn zeroize_sensitive(&mut self) {
+        fn wipe_u8(buf: &mut [u8]) {
+            for byte in buf.iter_mut() {
+                unsafe { core::ptr::write_volatile(byte, 0); }
+            }
+        }
+        fn wipe_u16(buf: &mut [u16]) {
+            for word in buf.iter_mut() {
+                unsafe { core::ptr::write_volatile(word, 0); }
+            }
+        }
+        fn wipe_vec(buf: &mut alloc::vec::Vec<u8>) {
+            wipe_u8(buf.as_mut_slice());
+            buf.clear();
+        }
+
+        self.seed_mgr.zeroize_all();
+        wipe_u16(&mut self.mnemonic_indices);
+        self.word_count = 0;
+        self.seed_loaded = false;
+        self.dice_collector.zeroize();
+        self.pp_input.reset();
+        wipe_u16(&mut self.bip85_child_indices);
+        self.bip85_child_wc = 0;
+
+        wipe_u8(&mut self.our_privkey);
+        wipe_u8(&mut self.acct_key_raw);
+        wipe_u8(&mut self.hex_input);
+        self.hex_input_len = 0;
+        wipe_u8(&mut self.export_key_hex);
+        wipe_u8(&mut self.xprv_data);
+        self.xprv_len = 0;
+
+        self.demo_tx.clear();
+        wipe_u8(&mut self.signed_qr_buf);
+        self.signed_qr_len = 0;
+        wipe_u8(&mut self.stego_pp_buf);
+        self.stego_pp_len = 0;
+        wipe_u8(&mut self.stego_pp_encrypted);
+        self.stego_pp_enc_len = 0;
+        wipe_u8(&mut self.import_exif_b64);
+        self.import_exif_b64_len = 0;
+        wipe_u8(&mut self.recovered_hint);
+        self.recovered_hint_len = 0;
+
+        wipe_u8(&mut self.sign_msg_sig);
+        wipe_u8(&mut self.sign_msg_hash);
+        wipe_u8(&mut self.cr_hash);
+        wipe_vec(&mut self.cr_ciphertext);
+        wipe_vec(&mut self.cr_part_a);
+        wipe_vec(&mut self.cr_part_b);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+
+    /// Erase commit/reveal working data before releasing its vector lengths.
+    pub fn clear_commit_reveal(&mut self) {
+        for byte in self.cr_ciphertext.iter_mut() {
+            unsafe { core::ptr::write_volatile(byte, 0); }
+        }
+        for byte in self.cr_part_a.iter_mut() {
+            unsafe { core::ptr::write_volatile(byte, 0); }
+        }
+        for byte in self.cr_part_b.iter_mut() {
+            unsafe { core::ptr::write_volatile(byte, 0); }
+        }
+        for byte in self.cr_hash.iter_mut() {
+            unsafe { core::ptr::write_volatile(byte, 0); }
+        }
+        self.cr_ciphertext.clear();
+        self.cr_part_a.clear();
+        self.cr_part_b.clear();
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+}
+
+impl Drop for AppData {
+    fn drop(&mut self) {
+        self.zeroize_sensitive();
+        PANIC_APP_DATA.store(core::ptr::null_mut(), Ordering::Release);
     }
 }

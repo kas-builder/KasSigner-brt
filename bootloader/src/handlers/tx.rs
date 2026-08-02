@@ -914,10 +914,7 @@ pub fn handle_tx_touch(
                     }
                     crate::app::input::AppState::CommitRevealResult => {
                         if is_back {
-                            ad.cr_ciphertext.clear();
-                            ad.cr_part_a.clear();
-                            ad.cr_part_b.clear();
-                            ad.cr_hash = [0u8; 32];
+                            ad.clear_commit_reveal();
                             ad.app.state = crate::app::input::AppState::SingleSigMenu;
                             needs_redraw = true;
                         } else if (150..=186).contains(&y) && (60..=260).contains(&x) {

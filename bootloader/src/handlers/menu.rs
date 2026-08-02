@@ -395,8 +395,7 @@ pub fn handle_menu_touch(
                                         } else {
                                             ad.pp_input.reset();
                                             ad.jpeg_desc_len = 0;
-                                            ad.cr_ciphertext.clear();
-                                            ad.cr_hash = [0u8; 32];
+                                            ad.clear_commit_reveal();
                                             ad.app.state = crate::app::input::AppState::CommitRevealType;
                                         }
                                     }
@@ -407,7 +406,7 @@ pub fn handle_menu_touch(
                                             sound::beep_error(delay);
                                             delay.delay_millis(1500);
                                         } else {
-                                            ad.cr_ciphertext.clear();
+                                            ad.clear_commit_reveal();
                                             ad.jpeg_desc_len = 0;
                                             ad.app.state = crate::app::input::AppState::DecryptSecretScan;
                                         }
@@ -520,7 +519,7 @@ pub fn handle_menu_touch(
                     crate::app::input::AppState::DiceRoll => {
                         if is_back {
                             // Cancel dice roll, go to tools menu
-                            ad.dice_collector.count = 0;
+                            ad.dice_collector.zeroize();
                             ad.app.state = crate::app::input::AppState::ToolsMenu;
                             needs_redraw = true;
                         } else {
@@ -548,7 +547,7 @@ pub fn handle_menu_touch(
                                     boot_display.draw_rejected_screen("Dice entry rejected");
                                     sound::beep_error(delay);
                                     delay.delay_millis(1500);
-                                    ad.dice_collector.count = 0;
+                                    ad.dice_collector.zeroize();
                                     ad.app.state = crate::app::input::AppState::ChooseWordCount { action: 1 };
                                     return Some(true);
                                 }

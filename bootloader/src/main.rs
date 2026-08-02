@@ -140,7 +140,6 @@ use esp_hal::ledc::timer::TimerIFace;
 use esp_hal::ledc::channel::ChannelIFace;
 use esp_hal::lcd_cam::LcdCam;
 use esp_hal::lcd_cam::cam::{Camera as DvpCamera, Config as CamConfig};
-use esp_backtrace as _;
 use crate::app::data::AppData;
 use crate::app::input::HandlerGroup;
 
@@ -709,6 +708,7 @@ fn main() -> ! {
     // so main's frame only holds a pointer; downstream code reborrows
     // through `ad` unchanged.
     let mut ad_box = alloc::boxed::Box::new(AppData::new());
+    app::data::register_for_panic_cleanup(&mut ad_box);
     #[allow(unused_mut)]
     let mut ad: &mut AppData = &mut ad_box;
 
@@ -1608,5 +1608,15 @@ fn cam_tune_apply_gc0308<I2C: embedded_hal::i2c::I2c>(i2c: &mut I2C, vals: &[u8;
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Panic halt hook — wipe key material before system halts
+// Panic halt hook — wipe the registered application secrets before halting
 // ═══════════════════════════════════════════════════════════════════
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
+    // Do not print panic details: they can expose data-dependent state over USB.
+    // This is best effort; sudden power loss still relies on volatile RAM loss.
+    unsafe { app::data::panic_zeroize_registered(); }
+    loop {
+        core::hint::spin_loop();
+    }
+}
