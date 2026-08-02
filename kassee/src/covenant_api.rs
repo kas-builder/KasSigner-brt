@@ -2794,7 +2794,7 @@ pub async fn create_covenant_payjoin_claim(
     // drained by repeating the claim until no covenant UTXOs remain.
     const MAX_COV_INPUTS: usize = 4;
     if cov_utxos.len() > MAX_COV_INPUTS {
-        cov_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+        cov_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
         cov_utxos.truncate(MAX_COV_INPUTS);
     }
 

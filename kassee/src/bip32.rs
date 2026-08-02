@@ -51,7 +51,7 @@ impl ExtPubKey {
 
         // kpub format: [4 version][1 depth][4 fingerprint][4 child_num][32 chain_code][33 pubkey]
         if decoded.len() < 78 {
-            return Err(format!("Too short: {} bytes (need 78)", decoded.len()))?;
+            return Err(format!("Too short: {} bytes (need 78)", decoded.len()));
         }
 
         Self::from_raw_payload(&decoded[..78])
@@ -285,4 +285,39 @@ pub fn extend_addresses(
         next_receive_index: wallet.next_receive_index,
         next_change_index: wallet.next_change_index,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_raw_payload() -> [u8; 78] {
+        let mut payload = [0u8; 78];
+        payload[..4].copy_from_slice(&[0x03, 0x8f, 0x33, 0x2e]);
+        payload[4] = 3;
+        payload[13..45].fill(1);
+        payload[45..78].copy_from_slice(
+            &hex::decode("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+                .unwrap(),
+        );
+        payload
+    }
+
+    #[test]
+    fn raw_kpub_parser_enforces_size_and_key_validity() {
+        assert!(ExtPubKey::from_raw_payload(&valid_raw_payload()).is_ok());
+        assert!(ExtPubKey::from_raw_payload(&valid_raw_payload()[..77]).is_err());
+        let mut invalid = valid_raw_payload();
+        invalid[45..78].fill(0);
+        assert!(ExtPubKey::from_raw_payload(&invalid).is_err());
+    }
+
+    #[test]
+    fn non_hardened_derivation_changes_key_and_depth() {
+        let parent = ExtPubKey::from_raw_payload(&valid_raw_payload()).unwrap();
+        let child = parent.derive_child(0).unwrap();
+        assert_eq!(child.depth, parent.depth + 1);
+        assert_ne!(child.x_only_bytes(), parent.x_only_bytes());
+        assert!(parent.derive_child(0x8000_0000).is_err());
+    }
 }

@@ -135,6 +135,19 @@ pub fn detect_format_hex(hex_str: &str) -> PsktFormat {
     }
 }
 
+#[cfg(test)]
+mod format_tests {
+    use super::*;
+
+    #[test]
+    fn detects_pskt_envelopes_without_accepting_near_misses() {
+        assert_eq!(detect_format_hex("50534b42"), PsktFormat::Pskb);
+        assert_eq!(detect_format_hex("50534B54"), PsktFormat::PsktSingle);
+        assert_eq!(detect_format_hex("50534b43"), PsktFormat::Unknown);
+        assert_eq!(detect_format_hex("50534b"), PsktFormat::Unknown);
+    }
+}
+
 /// Set `global.txPayload` on an existing single-entry PSKB wire and re-emit
 /// the wire. Used to attach a transaction payload (e.g. the stealth ephemeral
 /// R) to a plain send PSKB built by `create_send_pskb`, without duplicating

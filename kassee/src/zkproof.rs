@@ -23,7 +23,7 @@
 
 use ark_bn254::{Bn254, Fr};
 use ark_groth16::{Groth16, ProvingKey, VerifyingKey};
-use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
+use ark_relations::gr1cs::{ConstraintSynthesizer, ConstraintSystemRef, SynthesisError};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 
@@ -102,7 +102,7 @@ pub struct CrowdfundCircuit {
 
 impl ConstraintSynthesizer<Fr> for CrowdfundCircuit {
     fn generate_constraints(self, cs: ConstraintSystemRef<Fr>) -> Result<(), SynthesisError> {
-        use ark_relations::r1cs::LinearCombination;
+        use ark_relations::gr1cs::LinearCombination;
 
         // Allocate private witnesses for each amount
         let mut amount_vars = Vec::new();
@@ -132,10 +132,10 @@ impl ConstraintSynthesizer<Fr> for CrowdfundCircuit {
             sum_lc = sum_lc + *v;
         }
 
-        cs.enforce_constraint(
-            sum_lc,
-            LinearCombination::from(ark_relations::r1cs::Variable::One),
-            LinearCombination::from(sum_var),
+        cs.enforce_r1cs_constraint(
+            || sum_lc,
+            || LinearCombination::from(ark_relations::gr1cs::Variable::One),
+            || LinearCombination::from(sum_var),
         )?;
 
         Ok(())
@@ -208,6 +208,21 @@ fn serialize_compressed<T: CanonicalSerialize>(val: &T) -> Result<Vec<u8>, Strin
 /// produces exactly this format.
 fn serialize_field_element(f: &Fr) -> Result<Vec<u8>, String> {
     serialize_compressed(f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crowdfunding_proof_round_trip_and_wrong_input_rejection() {
+        let (pk, vk) = crowdfund_trusted_setup().unwrap();
+        let (proof, total) = crowdfund_generate_proof(&pk, &[11, 22, 33]).unwrap();
+        assert!(verify_proof(&vk, &proof, &total).unwrap());
+
+        let wrong_total = serialize_field_element(&Fr::from(67u64)).unwrap();
+        assert!(!verify_proof(&vk, &proof, &wrong_total).unwrap());
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -232,3 +232,28 @@ pub fn decoder_progress() -> String {
 pub fn generate_svg_from_text(text: &str) -> Result<String, String> {
     qr_to_svg(text.as_bytes())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_empty_and_invalid_hex() {
+        assert!(generate_frames("").is_err());
+        assert!(generate_frames("xyz").is_err());
+    }
+
+    #[test]
+    fn selects_single_and_multiframe_envelopes() {
+        let single = generate_frames(&hex::encode([0x55u8; 134])).unwrap();
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].frame_num, 0);
+        assert_eq!(single[0].total_frames, 1);
+
+        let multi = generate_frames(&hex::encode([0xAAu8; 212])).unwrap();
+        assert_eq!(multi.len(), 2);
+        assert!(multi.iter().all(|frame| frame.total_frames == 2));
+        assert_eq!(multi[0].frame_num, 0);
+        assert_eq!(multi[1].frame_num, 1);
+    }
+}

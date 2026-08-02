@@ -542,7 +542,7 @@ pub async fn create_merkle_whitelist_spend(
     // the user repeats the spend to drain the rest.
     const MAX_COV_INPUTS: usize = 4;
     if utxos.len() > MAX_COV_INPUTS {
-        utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+        utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
         utxos.truncate(MAX_COV_INPUTS);
     }
 

@@ -292,7 +292,7 @@ pub async fn create_oracle_mb_publish(
         .await
         .map_err(|e| JsValue::from_str(&e))?;
     wallet_utxos.retain(|u| u.covenant_id.is_none());
-    wallet_utxos.sort_by(|a, b| a.amount.cmp(&b.amount));
+    wallet_utxos.sort_by_key(|utxo| utxo.amount);
     let fee_utxo = wallet_utxos
         .iter()
         .find(|u| u.amount >= fee)

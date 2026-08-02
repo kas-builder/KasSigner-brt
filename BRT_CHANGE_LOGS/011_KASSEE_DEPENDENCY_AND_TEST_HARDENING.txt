@@ -1,0 +1,72 @@
+KASSIGNER SECURITY FIX RECORD 011
+
+Finding:
+KasSee dependency audit and test enforcement were ineffective
+
+Severity:
+Medium
+
+Branch:
+fix/kassee-dependency-tests
+
+Rusty Kaspa source of truth:
+Repository: https://github.com/kaspanet/rusty-kaspa.git
+Commit: a41a333b08848f41bf737b72592e463a6011b8ac
+
+Affected files:
+.github/workflows/kassee-ci.yml
+kassee/Cargo.toml
+kassee/Cargo.lock
+kassee/src/address.rs
+kassee/src/bip32.rs
+kassee/src/covenant_api.rs
+kassee/src/kspt.rs
+kassee/src/oracle_mb_api.rs
+kassee/src/pskt.rs
+kassee/src/qr.rs
+kassee/src/zk_api.rs
+kassee/src/zkproof.rs
+
+Problem before:
+KasSee enabled Arkworks' optional standard-library and tracing dependency
+chain. That included tracing-subscriber 0.2.25, affected by
+RUSTSEC-2025-0055. The RustSec CI job ignored that advisory and was also marked
+continue-on-error, so an audit failure did not fail CI. KasSee had no active
+unit tests. Strict Clippy reported twelve warnings. KasSee used Arkworks 0.5
+while claiming to match the current Rusty Kaspa node.
+
+Fix after:
+The optional Arkworks tracing layer is disabled. tracing-subscriber and the
+RUSTSEC-2025-0055 dependency path are absent. Arkworks consensus-facing crates
+are pinned to 0.6.0, exactly matching the versions pinned by the referenced
+Rusty Kaspa commit. The documented Arkworks 0.6 r1cs-to-gr1cs API migration was
+applied, including use of enforce_r1cs_constraint for the same three-part
+equation.
+
+CI now runs formatting, native Clippy for all targets, WebAssembly Clippy,
+unit tests, and cargo audit. Warnings are denied by Clippy. Tests and audits no
+longer continue after failure, and no RustSec advisory is ignored.
+
+Tests added:
+Official Rusty Kaspa mainnet address vectors for an all-zero key and a known
+public key; corrupted-address rejection; extended-public-key input validation
+and non-hardened derivation behavior; single- and multi-frame QR behavior;
+PSKB/PSKT envelope detection; BLAKE2b-256 known output; and a real Groth16
+setup/prove/verify round trip that also rejects an incorrect public total.
+
+Verification:
+cargo check --locked passed.
+cargo fmt --all -- --check passed.
+cargo clippy --locked --all-targets -- -D warnings passed.
+cargo test --locked passed all ten tests.
+cargo clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
+passed.
+cargo audit found no vulnerabilities.
+tracing-subscriber is absent from Cargo.lock and the dependency tree.
+
+Remaining dependency notice:
+RustSec reports derivative 2.2.0 as unmaintained, not vulnerable. It is a
+transitive dependency of ark-crypto-primitives 0.6.0, the current Arkworks
+version aligned with Rusty Kaspa. It cannot be removed locally without
+forking or replacing the upstream cryptographic dependency and is therefore
+recorded rather than silently ignored in the command.

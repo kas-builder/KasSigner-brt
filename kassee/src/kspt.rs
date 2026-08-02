@@ -23,6 +23,19 @@ pub fn blake2b_hash(data: &[u8]) -> [u8; 32] {
     out
 }
 
+#[cfg(test)]
+mod hash_tests {
+    use super::*;
+
+    #[test]
+    fn blake2b_256_empty_official_vector() {
+        assert_eq!(
+            hex::encode(blake2b_hash(&[])),
+            "0e5751c026e543b2e8ab2eb06099daa1d1e5df47778f7787faab45cdf12fe3a8"
+        );
+    }
+}
+
 const STORAGE_MASS_C: u64 = 1_000_000_000_000;
 const MAX_STANDARD_MASS: u64 = 100_000;
 const DUST_THRESHOLD: u64 = 20_000_000;
@@ -97,7 +110,7 @@ pub async fn create_send_kspt(
     let dest_script = crate::address::address_to_script_pubkey(dest_address)?;
 
     let mut all_utxos = crate::rpc::fetch_all_utxos(ws_url, wallet).await?;
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = amount_sompi + fee;
     let mut selected = Vec::new();
@@ -184,7 +197,7 @@ pub async fn create_send_to_raw_spk(
     let dest_script = hex::decode(spk_hex).map_err(|e| format!("Bad SPK hex: {}", e))?;
 
     let mut all_utxos = crate::rpc::fetch_all_utxos(ws_url, wallet).await?;
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = amount_sompi + fee;
     let mut selected = Vec::new();
@@ -264,7 +277,7 @@ pub async fn create_consolidate_kspt(
     }
 
     // Sort largest first, cap at 5 inputs to stay within 1024-byte signed TX limit
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
     let selected: Vec<_> = all_utxos.into_iter().take(5).collect();
 
     let total: u64 = selected.iter().map(|u| u.amount).sum();
@@ -413,7 +426,7 @@ pub async fn create_compound_kspt(
 
     // Fetch and select UTXOs
     let mut all_utxos = crate::rpc::fetch_all_utxos(ws_url, wallet).await?;
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = total_send + fee;
     let mut selected = Vec::new();
@@ -687,7 +700,7 @@ pub async fn create_multisig_kspt(
         return Err("No UTXOs found for multisig address".into());
     }
 
-    utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = amount_sompi + fee;
     let mut selected = Vec::new();
@@ -841,7 +854,7 @@ pub async fn create_send_pskb(
     let dest_script = crate::address::address_to_script_pubkey(dest_address)?;
 
     let mut all_utxos = crate::rpc::fetch_all_utxos(ws_url, wallet).await?;
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = amount_sompi + fee;
     let mut selected = Vec::new();
@@ -927,7 +940,7 @@ pub async fn create_consolidate_pskb(
         return Err("Only 1 UTXO — nothing to consolidate".into());
     }
 
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
     let selected: Vec<_> = all_utxos.into_iter().take(5).collect();
 
     let total: u64 = selected.iter().map(|u| u.amount).sum();
@@ -1159,7 +1172,7 @@ pub async fn create_compound_pskb(
     }
 
     let mut all_utxos = crate::rpc::fetch_all_utxos(ws_url, wallet).await?;
-    all_utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    all_utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = total_send + fee;
     let mut selected = Vec::new();
@@ -1533,7 +1546,7 @@ pub async fn create_multisig_pskb(
     if utxos.is_empty() {
         return Err("No UTXOs found for multisig address".into());
     }
-    utxos.sort_by(|a, b| b.amount.cmp(&a.amount));
+    utxos.sort_by_key(|utxo| core::cmp::Reverse(utxo.amount));
 
     let total_needed = amount_sompi + fee;
     let mut selected = Vec::new();

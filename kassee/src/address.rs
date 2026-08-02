@@ -221,3 +221,40 @@ fn conv5to8(payload: &[u8]) -> Vec<u8> {
     }
     eight_bit
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn matches_official_zero_pubkey_vector() {
+        let expected = "kaspa:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqkx9awp4e";
+        let address = encode_p2pk_address(&[0u8; 32], "kaspa");
+        assert_eq!(address, expected);
+        assert_eq!(decode_address(&address), Ok((0, [0u8; 32])));
+        assert_eq!(
+            address_to_script_pubkey(&address).unwrap(),
+            [vec![0x20], vec![0u8; 32], vec![0xAC]].concat()
+        );
+    }
+
+    #[test]
+    fn matches_official_known_pubkey_vector() {
+        let pubkey =
+            hex::decode("5fff3c4da18f45adcdd499e44611e9fff148ba69db3c4ea2ddd955fc46a59522")
+                .unwrap();
+        let pubkey: [u8; 32] = pubkey.try_into().unwrap();
+        assert_eq!(
+            encode_p2pk_address(&pubkey, "kaspa"),
+            "kaspa:qp0l70zd5x85ttwd6jv7g3s3a8llzj96d8dncn4zmhv4tlzx5k2jyqh70xmfj"
+        );
+    }
+
+    #[test]
+    fn rejects_checksum_corruption() {
+        let mut address = encode_p2pk_address(&[7u8; 32], "kaspa").into_bytes();
+        let last = address.len() - 1;
+        address[last] = if address[last] == b'q' { b'p' } else { b'q' };
+        assert!(decode_address(core::str::from_utf8(&address).unwrap()).is_err());
+    }
+}

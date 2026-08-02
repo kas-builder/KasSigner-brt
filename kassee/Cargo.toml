@@ -67,19 +67,22 @@ console_error_panic_hook = "0.1"
 # getrandom for WASM
 getrandom = { version = "0.2", features = ["js"] }
 
-# Arkworks ZK — Groth16 prover over BN254 (same curve as Kaspa node verifier)
-# Must match node's arkworks version for byte-compatible proof/VK serialization.
-# std enabled: KasSee runs in browser WASM (cdylib), not no_std.
-ark-ff = { version = "0.5", default-features = false, features = ["std"] }
-ark-ec = { version = "0.5", default-features = false, features = ["std"] }
-ark-bn254 = { version = "0.5", default-features = false, features = ["curve"] }
-ark-groth16 = { version = "0.5", default-features = false, features = ["std"] }
-ark-relations = { version = "0.5", default-features = false, features = ["std"] }
-ark-serialize = { version = "0.5", default-features = false, features = ["std"] }
-ark-std = { version = "0.5", default-features = false, features = ["std"] }
-ark-snark = { version = "0.5", default-features = false }
-ark-r1cs-std = { version = "0.5", default-features = false }
-ark-crypto-primitives = { version = "0.5", default-features = false, features = ["snark", "crh"] }
+# Arkworks ZK — Groth16 prover over BN254. Versions are pinned to the exact
+# Arkworks release used by rusty-kaspa's workspace.
+# Keep Arkworks' optional tracing/std layer disabled. KasSee's WASM runtime has
+# allocation support, while the crypto crates themselves operate without that
+# logging layer; disabling it also removes the vulnerable tracing-subscriber
+# 0.2 dependency chain (RUSTSEC-2025-0055).
+ark-ff = { version = "=0.6.0", default-features = false }
+ark-ec = { version = "=0.6.0", default-features = false }
+ark-bn254 = { version = "=0.6.0", default-features = false, features = ["curve"] }
+ark-groth16 = { version = "=0.6.0", default-features = false }
+ark-relations = { version = "=0.6.0", default-features = false }
+ark-serialize = { version = "=0.6.0", default-features = false }
+ark-std = { version = "=0.6.0", default-features = false }
+ark-snark = { version = "=0.6.0", default-features = false }
+ark-r1cs-std = { version = "=0.6.0", default-features = false }
+ark-crypto-primitives = { version = "=0.6.0", default-features = false, features = ["snark", "crh"] }
 
 [profile.release]
 opt-level = "s"
