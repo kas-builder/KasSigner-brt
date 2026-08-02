@@ -18,7 +18,8 @@
 // 100% Rust, no-std, no-alloc
 //
 // KasSigner is air-gapped. WiFi, Bluetooth, USB OTG, and JTAG have
-// no legitimate use. This module kills them at the register level.
+// no legitimate use. This module shuts down unused peripherals and
+// verifies the permanent hardware security state in production builds.
 //
 // Two phases:
 //   early_lockdown()  — called immediately after esp_hal::init(),
@@ -26,10 +27,70 @@
 //   post_boot_lockdown() — called after firmware verification,
 //                          before the main loop. Kills USB data + JTAG.
 //
-// These are software disables. For permanent (eFuse) disable, see
-// docs/EFUSE_RUNBOOK.md.
+// Software register writes are defense in depth, not a hardware root of
+// trust. Permanent Secure Boot, flash encryption, and JTAG disablement are
+// read from eFuses and are required by production firmware. This module
+// never burns eFuses.
 
 use crate::log;
+use esp_hal::efuse::{
+    Efuse, DIS_PAD_JTAG, DIS_USB_JTAG, SECURE_BOOT_EN,
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HardwareSecurityState {
+    pub secure_boot: bool,
+    pub flash_encryption: bool,
+    pub pad_jtag_disabled: bool,
+    pub usb_jtag_disabled: bool,
+}
+
+impl HardwareSecurityState {
+    pub const fn production_ready(self) -> bool {
+        self.secure_boot
+            && self.flash_encryption
+            && self.pad_jtag_disabled
+            && self.usb_jtag_disabled
+    }
+}
+
+/// Read the ESP32-S3's permanent security configuration. This operation is
+/// read-only and cannot change or burn an eFuse.
+pub fn hardware_security_state() -> HardwareSecurityState {
+    HardwareSecurityState {
+        secure_boot: Efuse::read_field_le::<u8>(SECURE_BOOT_EN) != 0,
+        flash_encryption: Efuse::flash_encryption(),
+        pad_jtag_disabled: Efuse::read_field_le::<u8>(DIS_PAD_JTAG) != 0,
+        usb_jtag_disabled: Efuse::read_field_le::<u8>(DIS_USB_JTAG) != 0,
+    }
+}
+
+/// Production builds fail closed unless the hardware root of trust is fully
+/// provisioned. Development builds log the same state without preventing
+/// testing on an unprovisioned board.
+pub fn hardware_security_policy_satisfied() -> bool {
+    let state = hardware_security_state();
+    log!(
+        "   [SEC] eFuses: secure_boot={} flash_encryption={} pad_jtag_off={} usb_jtag_off={}",
+        state.secure_boot,
+        state.flash_encryption,
+        state.pad_jtag_disabled,
+        state.usb_jtag_disabled
+    );
+
+    #[cfg(feature = "production")]
+    {
+        state.production_ready()
+    }
+
+    #[cfg(not(feature = "production"))]
+    {
+        if !state.production_ready() {
+            log!("   [WARN] Development device is not hardware-provisioned");
+        }
+        true
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // System register addresses (ESP32-S3 TRM Ch.7)
@@ -122,17 +183,17 @@ pub fn early_lockdown() {
 // Phase 2: Post-boot lockdown — kill USB data + JTAG after verify
 // ═══════════════════════════════════════════════════════════════════
 
-/// Disable USB Serial/JTAG data and JTAG debug interface.
+/// Reduce the USB Serial/JTAG peripheral attack surface.
 /// Called after firmware verification, before the main loop.
 ///
 /// In dev mode (not production), USB Serial is kept alive for UART
 /// monitoring. In production, everything is killed.
 ///
-/// JTAG is always disabled regardless of build mode — there is no
-/// legitimate debug use case for a deployed air-gapped signer.
+/// Permanent JTAG disablement is enforced by the production eFuse policy
+/// above. Register writes here must not be described as equivalent to that.
 pub fn post_boot_lockdown() {
     unsafe {
-        // ── Disable JTAG bridge ──
+        // ── Reduce USB/JTAG pin surface ──
         // The USB_SERIAL_JTAG peripheral has a JTAG-to-USB bridge.
         // Clear the exchange pin override to disconnect JTAG from pins.
         // This prevents using USB to access JTAG even if the peripheral
@@ -141,7 +202,6 @@ pub fn post_boot_lockdown() {
         // Bit 13: USB_SERIAL_JTAG_USB_PAD_ENABLE — controls whether
         // the USB pads are connected. We leave this for UART.
         // Bit 2: EXCHANGE_PINS — if set, swaps D+/D- (irrelevant here)
-        // The key is to disable the JTAG TAP by disconnecting it from pins.
         // Write 0 to bits [4:3] (VDD_SPI_AS_GPIO, PULLUP_DM) to reduce
         // attack surface on the USB pins.
         reg_write(USB_SERIAL_JTAG_CONF0, conf0 & !(0x3 << 3));
@@ -160,7 +220,34 @@ pub fn post_boot_lockdown() {
     log!("   [SEC] USB Serial/JTAG disabled (production)");
 
     #[cfg(not(feature = "production"))]
-    log!("   [SEC] JTAG disabled (USB UART kept for dev)");
+    log!("   [SEC] USB/JTAG surface reduced (USB UART kept for dev)");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HardwareSecurityState;
+
+    #[test]
+    fn production_policy_requires_every_hardware_control() {
+        let ready = HardwareSecurityState {
+            secure_boot: true,
+            flash_encryption: true,
+            pad_jtag_disabled: true,
+            usb_jtag_disabled: true,
+        };
+        assert!(ready.production_ready());
+
+        for missing in 0..4 {
+            let mut state = ready;
+            match missing {
+                0 => state.secure_boot = false,
+                1 => state.flash_encryption = false,
+                2 => state.pad_jtag_disabled = false,
+                _ => state.usb_jtag_disabled = false,
+            }
+            assert!(!state.production_ready());
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -1,0 +1,48 @@
+KASSIGNER SECURITY FIX RECORD 008
+
+Finding:
+Hardware root of trust was optional and the M5Stack build skipped lockdown
+
+Severity:
+High
+
+Branch:
+fix/m5stack-lockdown
+
+Affected files:
+bootloader/src/hw/lockdown.rs
+bootloader/src/hw/mod.rs
+bootloader/src/main.rs
+
+Problem before:
+The radio, USB OTG, and USB/JTAG software lockdown module was compiled and
+called only for Waveshare builds. M5Stack builds skipped it. The software also
+said JTAG was disabled even though permanent JTAG disablement requires eFuses.
+Production firmware did not require Secure Boot, flash encryption, or JTAG
+disable eFuses before operating.
+
+Fix after:
+The shared ESP32-S3 lockdown module is compiled and called for both supported
+boards. It reads the permanent Secure Boot, flash-encryption, pad-JTAG-disable,
+and USB-JTAG-disable eFuses. Production firmware fails closed and shows
+"EFUSE SECURITY OFF" unless every required control is enabled. Development
+firmware reports the state but remains usable on an unprovisioned test unit.
+
+Safety boundary:
+This firmware only reads eFuses. It contains no eFuse-burning operation and
+cannot permanently provision or alter a device. Provisioning remains a
+separate, explicit, irreversible manufacturing step.
+
+Claim correction:
+Software register writes reduce the USB/JTAG attack surface but do not equal
+permanent JTAG disablement. Comments and log messages now state that clearly.
+
+Verification:
+Cargo checks passed for Waveshare and M5Stack in normal, verbose-boot, and
+production configurations. A unit policy test verifies that production-ready
+status requires all four hardware controls.
+
+Physical verification still required:
+Before release, test both an unprovisioned development M5Stack and a correctly
+provisioned production device. Do not burn security eFuses on the only test
+device without a separate reviewed provisioning and recovery plan.

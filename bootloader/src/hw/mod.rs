@@ -92,13 +92,12 @@ pub mod sdcard;
 
 // ─── Shared modules (both platforms) ─────────────────────────
 pub mod icon_data;
+pub mod lockdown;
 pub mod sd_backup;
 
 // ─── Waveshare-only modules ──────────────────────────────────
 #[cfg(feature = "waveshare")]
 pub mod board;
-#[cfg(feature = "waveshare")]
-pub mod lockdown;
 #[cfg(feature = "waveshare")]
 pub mod ov5640_af_fw;
 #[cfg(feature = "waveshare")]
