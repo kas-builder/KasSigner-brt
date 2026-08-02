@@ -107,6 +107,23 @@ pub const FIRMWARE_MAX_SIZE: usize = CODE_SEGMENT_MAX_SIZE;
 const CANARY_PRE_VERIFY: u32  = 0xDEAD_BEEF;
 const CANARY_POST_VERIFY: u32 = 0xCAFE_BABE;
 
+fn signature_metadata_consistent(signed: bool, signature: &[u8; 64]) -> bool {
+    let signature_is_zero = constant_time::eq(signature, &[0u8; 64]);
+    signed != signature_is_zero
+}
+
+/// Verify that signed/unsigned metadata cannot contradict its signature bytes.
+pub fn test_signature_metadata_policy() -> bool {
+    let empty = [0u8; 64];
+    let mut present = [0u8; 64];
+    present[0] = 1;
+
+    signature_metadata_consistent(false, &empty)
+        && signature_metadata_consistent(true, &present)
+        && !signature_metadata_consistent(true, &empty)
+        && !signature_metadata_consistent(false, &present)
+}
+
 // Flow counter and constant_time now come from crate::crypto
 // Stages per pass of do_verify_mapped_code:
 //   +1 Start read
@@ -123,6 +140,9 @@ const CANARY_POST_VERIFY: u32 = 0xCAFE_BABE;
 #[derive(Debug, Clone, Copy, PartialEq)]
 /// Firmware verification outcome.
 pub enum VerificationResult {
+    /// Code hash matched, but this non-production build did not authenticate
+    /// the embedded developer signature.
+    HashValidOnly,
     Valid,
     InvalidHash,
     InvalidSignature,
@@ -182,6 +202,13 @@ pub fn verify_firmware(
         log!("   Version {} >= minimum {} OK", current_version, self.min_version);
         flow::step(); // STAGE 2
 
+        // Generated metadata must never claim a signature when the signature
+        // field is empty, or claim to be unsigned while carrying a signature.
+        if !signature_metadata_consistent(FIRMWARE_SIGNED, &FIRMWARE_SIGNATURE) {
+            log!("   FAIL: Inconsistent firmware signature metadata");
+            return VerificationResult::InvalidSignature;
+        }
+
         // ════════════════════════════════════════════════════════
         // DEVELOPMENT MODE
         // ════════════════════════════════════════════════════════
@@ -190,11 +217,13 @@ pub fn verify_firmware(
             log!("   [DEV] Development mode");
 
             if constant_time::eq(&self.expected_hash, &[0u8; 32]) {
-                log!("   [DEV] Hash not configured — skip");
-                return VerificationResult::Valid;
+                log!("   [DEV] Hash not configured — refusing verification");
+                return VerificationResult::InvalidHash;
             }
 
-            // Real but non-blocking verification
+            // Development builds verify the code hash and propagate every
+            // failure. They are explicitly reported as hash-only because the
+            // signature is authenticated only by the production path.
             let dev_result = self.do_verify_mapped_code(firmware_start, max_size);
 
             compiler_fence(Ordering::SeqCst);
@@ -203,14 +232,11 @@ pub fn verify_firmware(
                 return VerificationResult::CanaryCorrupt;
             }
 
-            match dev_result {
-                VerificationResult::Valid => {
-                    log!("   [DEV] Code segment hash: OK");
-                }
-                _ => {
-                    log!("   [DEV] WARNING: Hash mismatch ({:?}), continuing", dev_result);
-                }
+            if !matches!(dev_result, VerificationResult::Valid) {
+                log!("   [DEV] Verification failed: {:?}", dev_result);
+                return dev_result;
             }
+            log!("   [DEV] Code segment hash: OK");
 
             // Developer signature check skipped in dev builds:
             // - Schnorr verify uses k256 point multiplication (~16KB stack)
@@ -222,7 +248,7 @@ pub fn verify_firmware(
                 log!("   [DEV] Build not signed");
             }
 
-            VerificationResult::Valid
+            VerificationResult::HashValidOnly
         }
 
         // ════════════════════════════════════════════════════════

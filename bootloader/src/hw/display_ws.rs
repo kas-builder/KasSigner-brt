@@ -471,6 +471,7 @@ impl<'a> BootDisplay<'a> {
 
         let status_text = match status {
             BootStatus::Verifying => "Verifying...",
+            BootStatus::HashOnly => "HASH OK / DEV",
             BootStatus::Valid => "Verified OK",
             BootStatus::Invalid => "INVALID!",
             BootStatus::Error => "ERROR!",
@@ -662,6 +663,7 @@ impl<'a> BootDisplay<'a> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BootStatus {
     Verifying,
+    HashOnly,
     Valid,
     Invalid,
     Error,

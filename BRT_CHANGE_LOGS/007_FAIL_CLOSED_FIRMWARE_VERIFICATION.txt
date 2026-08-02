@@ -1,0 +1,58 @@
+KASSIGNER SECURITY FIX RECORD 007
+
+Finding:
+Development firmware verification accepted mismatches and displayed success
+
+Severity:
+High
+
+Parent fix:
+38fac53f6ec94efc5e69322f631eea64bf1d21e3
+
+Fix branch:
+fix/fail-closed-firmware-verification
+
+Problem:
+Development builds returned Valid when no expected hash was configured. They
+also logged a hash mismatch and continued, then displayed "Verified OK". The
+hash generator always wrote FIRMWARE_SIGNED=true even when no signing key was
+provided.
+
+Before:
+Missing hash -> Valid.
+Mismatching hash -> warning -> Valid.
+Development signature -> skipped while screen still said Verified OK.
+Unsigned generator output incorrectly claimed it was signed.
+
+After:
+Missing hash -> InvalidHash -> firmware halts.
+Mismatching or unreadable code -> exact failure is returned -> firmware halts.
+Matching development code -> HashValidOnly -> screen says HASH OK / DEV.
+Production still requires two matching hash passes and a valid developer
+signature before returning Valid and displaying Verified OK.
+Generated FIRMWARE_SIGNED now exactly reflects whether a signing key was used.
+Contradictory signed/unsigned metadata fails as InvalidSignature.
+
+Failure handling:
+There is no warning-and-continue path for a missing or mismatching firmware
+hash. Invalid hash, signature, version, memory read, flow, and canary results
+all enter the existing visible fatal halt path.
+
+Verification:
+Normal, verbose, and production release builds pass for Waveshare and M5Stack.
+The metadata-policy boot test accepts only these pairs:
+unsigned + zero signature
+signed + nonzero signature
+It rejects both contradictory pairs.
+
+Build workflow requirement:
+Every flashable image must be produced through tools/build_with_hash.sh so the
+final code segment hash is embedded and converged. Production additionally
+requires the authorized offline signing key. Direct cargo builds are compile
+checks only and must not be treated as flashable verified release artifacts.
+
+Physical testing still required:
+Flash a correctly generated development image and confirm HASH OK / DEV.
+Deliberately alter the expected hash and confirm the device visibly halts.
+On a sacrificial production-configured board, confirm a valid signed image
+boots and unsigned, altered, and wrong-key images do not.

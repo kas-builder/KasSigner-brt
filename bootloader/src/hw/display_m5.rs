@@ -594,6 +594,7 @@ impl<'a> BootDisplay<'a> {
         // Status — Lato Bold 18px, centered, colored
         let status_text = match status {
             BootStatus::Verifying => "Verifying...",
+            BootStatus::HashOnly => "HASH OK / DEV",
             BootStatus::Valid => "Verified OK",
             BootStatus::Invalid => "INVALID!",
             BootStatus::Error => "ERROR!",
@@ -736,6 +737,7 @@ impl<'a> BootDisplay<'a> {
 /// Boot verification status for the splash screen.
 pub enum BootStatus {
     Verifying,
+    HashOnly,
     Valid,
     Invalid,
     Error,

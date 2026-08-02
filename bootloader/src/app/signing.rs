@@ -448,6 +448,17 @@ pub fn run_firmware_verify(
     delay.delay_millis(3000);
 
     match verify_result {
+        VerificationResult::HashValidOnly => {
+            log!("Firmware code hash matched; developer signature not authenticated");
+            boot_display
+                .show_verification_screen(
+                    version_str.as_str(),
+                    hash_short.as_str(),
+                    BootStatus::HashOnly,
+                )
+                .ok();
+            delay.delay_millis(2500);
+        }
         VerificationResult::Valid => {
             log!("Firmware verified OK");
 

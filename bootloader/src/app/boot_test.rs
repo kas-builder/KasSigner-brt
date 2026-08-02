@@ -199,6 +199,13 @@ pub fn run_phase1_tests(delay: &mut esp_hal::delay::Delay) {
         }
     }
 
+    if !crate::features::verify::test_signature_metadata_policy() {
+        log!("   CRITICAL: Firmware signature metadata policy failed.");
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+
     log!();
 
     // ═══════════════════════════════════════════════════════════════

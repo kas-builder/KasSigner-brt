@@ -1422,6 +1422,7 @@ fn continue_without_display(delay: &mut Delay) -> ! {
     log!("   Version: {}", fw.version_string().as_str());
     log!("   Address: 0x{:08X}", FIRMWARE_START_ADDR);
     match fw.verify_firmware(FIRMWARE_START_ADDR, FIRMWARE_MAX_SIZE) {
+        VerificationResult::HashValidOnly => log!("Firmware hash matched (development; signature not authenticated)"),
         VerificationResult::Valid => log!("Firmware verified OK"),
         other => {
             log!("CRITICAL: Verification failed: {:?}", other);
