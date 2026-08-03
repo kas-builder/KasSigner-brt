@@ -561,6 +561,7 @@ pub fn handle_tx_touch(
                                 1 => { boot_display.draw_keyboard_screen(&ad.pp_input, "MESSAGE"); }
                                 6 => {
                                     // OK — copy text to jpeg_desc_buf (reuse as message buffer)
+                                    ad.clear_jpeg_description();
                                     let msg = ad.pp_input.as_str();
                                     let copy_len = msg.len().min(128);
                                     ad.jpeg_desc_buf[..copy_len].copy_from_slice(&msg.as_bytes()[..copy_len]);
@@ -587,7 +588,7 @@ pub fn handle_tx_touch(
                                         boot_display.update_progress_bar(50);
                                         delay.delay_millis(50);
                                         let fname83 = ad.txt_file_names[idx as usize];
-                                        ad.jpeg_desc_len = 0;
+                                        ad.clear_jpeg_description();
                                         let read_ok = sdcard::with_sd_card(i2c, delay, |ct| {
                                             let fat32 = sdcard::mount_fat32(ct)?;
                                             let (entry, _, _) = sdcard::find_file_in_root(ct, &fat32, &fname83)?;
@@ -627,6 +628,7 @@ pub fn handle_tx_touch(
                     }
                     crate::app::input::AppState::SignMsgPreview => {
                         if is_back {
+                            ad.clear_jpeg_description();
                             ad.app.state = crate::app::input::AppState::SignMsgChoice;
                             needs_redraw = true;
                         } else if (185..=225).contains(&y) && (100..=220).contains(&x) {
@@ -637,8 +639,9 @@ pub fn handle_tx_touch(
 
                             // SHA256 hash the message
                             let msg = &ad.jpeg_desc_buf[..ad.jpeg_desc_len];
-                            let msg_hash = wallet::hmac::sha256(msg);
+                            let mut msg_hash = wallet::hmac::sha256(msg);
                             ad.sign_msg_hash = msg_hash;
+                            ad.clear_jpeg_description();
                             boot_display.update_progress_bar(40);
 
                             // Derive private key at account level (depth 3: m/44'/111111'/0')
@@ -673,6 +676,7 @@ pub fn handle_tx_touch(
                             }
                             // Zeroize private key
                             wallet::hmac::zeroize_buf(&mut privkey);
+                            wallet::hmac::zeroize_buf(&mut msg_hash);
                         }
                     }
                     crate::app::input::AppState::SignMsgHashPreview => {
@@ -719,6 +723,9 @@ pub fn handle_tx_touch(
                     }
                     crate::app::input::AppState::SignMsgResult => {
                         if is_back {
+                            ad.clear_jpeg_description();
+                            wallet::hmac::zeroize_buf(&mut ad.sign_msg_hash);
+                            wallet::hmac::zeroize_buf(&mut ad.sign_msg_sig);
                             ad.app.state = crate::app::input::AppState::SingleSigMenu;
                             needs_redraw = true;
                         } else if (155..=191).contains(&y) && (20..=150).contains(&x) {
@@ -860,8 +867,7 @@ pub fn handle_tx_touch(
                                 boot_display.draw_rejected_screen("Secure RNG failed");
                                 sound::beep_error(delay);
                                 delay.delay_millis(2000);
-                                for b in ad.jpeg_desc_buf[..ad.jpeg_desc_len].iter_mut() { *b = 0; }
-                                ad.jpeg_desc_len = 0;
+                                ad.clear_jpeg_description();
                                 ad.pp_input.reset();
                                 return Some(true);
                             }
@@ -907,8 +913,7 @@ pub fn handle_tx_touch(
                             wallet::hmac::zeroize_buf(&mut rng_bytes);
 
                             // Zeroize plaintext from buffer
-                            for b in ad.jpeg_desc_buf[..ad.jpeg_desc_len].iter_mut() { *b = 0; }
-                            ad.jpeg_desc_len = 0;
+                            ad.clear_jpeg_description();
                             ad.pp_input.reset();
                         }
                     }
@@ -949,8 +954,7 @@ pub fn handle_tx_touch(
                     }
                     crate::app::input::AppState::DecryptSecretResult => {
                         if is_back {
-                            for b in ad.jpeg_desc_buf[..ad.jpeg_desc_len].iter_mut() { *b = 0; }
-                            ad.jpeg_desc_len = 0;
+                            ad.clear_jpeg_description();
                             ad.app.state = crate::app::input::AppState::SingleSigMenu;
                             needs_redraw = true;
                         } else if (150..=186).contains(&y) && (70..=250).contains(&x) {

@@ -97,10 +97,11 @@ pub fn is_empty(&self) -> bool {
             passphrase,
         );
 
-        let hash = Sha256::digest(&seed.bytes);
+        let mut hash: [u8; 32] = Sha256::digest(&seed.bytes).into();
         self.fingerprint.copy_from_slice(&hash[..4]);
 
         seed.zeroize();
+        crate::wallet::hmac::zeroize_buf(&mut hash);
     }
 
     /// Get passphrase as &str
@@ -131,6 +132,12 @@ pub fn is_empty(&self) -> bool {
         }
         self.fingerprint = [0; 4];
         core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl Drop for SeedSlot {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -247,8 +254,9 @@ pub fn store(
     pub fn store_raw_key(&mut self, key: &[u8; 32]) -> Option<usize> {
         // Compute fingerprint to check for duplicates
         use sha2::{Sha256, Digest};
-        let hash = Sha256::digest(key);
+        let mut hash: [u8; 32] = Sha256::digest(key).into();
         let fp = [hash[0], hash[1], hash[2], hash[3]];
+        crate::wallet::hmac::zeroize_buf(&mut hash);
 
         if let Some(existing) = self.find_by_fingerprint(&fp) {
             return Some(existing);
@@ -660,7 +668,11 @@ pub fn test_seed_manager_store_delete() -> bool {
     mgr.delete(0);
     if mgr.count() != 0 { return false; }
     if mgr.active != 0xFF { return false; }
-    true
+    mgr.slots[0].word_count == 0
+        && mgr.slots[0].passphrase_len == 0
+        && mgr.slots[0].indices.iter().all(|value| *value == 0)
+        && mgr.slots[0].passphrase.iter().all(|value| *value == 0)
+        && mgr.slots[0].fingerprint.iter().all(|value| *value == 0)
 }
 
 /// Test: passphrases are stored fully through 128 bytes and invalid lengths fail.

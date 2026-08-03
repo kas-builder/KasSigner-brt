@@ -102,6 +102,7 @@ pub fn handle_stego_touch(
                                 } else {
                                     (ad.jpeg_selected) = 0;
                                     ad.app.state = crate::app::input::AppState::StegoJpegPick;
+                                    ad.clear_jpeg_description();
                                     needs_redraw = true;
                                 }
                             }
@@ -152,7 +153,7 @@ pub fn handle_stego_touch(
                                     let abs = scroll + slot;
                                     if abs < (ad.jpeg_file_count) {
                                         (ad.jpeg_selected) = abs;
-                                        ad.jpeg_desc_len = 0;
+                                        ad.clear_jpeg_description();
                                         ad.app.state = crate::app::input::AppState::StegoJpegDescChoice;
                             needs_redraw = true;
                                     }
@@ -164,6 +165,7 @@ pub fn handle_stego_touch(
                     }
                     crate::app::input::AppState::StegoJpegDescChoice => {
                         if is_back {
+                            ad.clear_jpeg_description();
                             ad.app.state = crate::app::input::AppState::StegoJpegPick;
                             needs_redraw = true;
                         } else if (40..280).contains(&x) && (68..112).contains(&y) {
@@ -224,7 +226,7 @@ pub fn handle_stego_touch(
                                     boot_display.update_progress_bar(50);
                                     delay.delay_millis(50);
                                     let fname83 = ad.txt_file_names[idx as usize];
-                                    ad.jpeg_desc_len = 0;
+                                    ad.clear_jpeg_description();
                                     let read_ok = sdcard::with_sd_card(i2c, delay, |ct| {
                                         let fat32 = sdcard::mount_fat32(ct)?;
                                         let (entry, _, _) = sdcard::find_file_in_root(ct, &fat32, &fname83)?;
@@ -272,6 +274,7 @@ pub fn handle_stego_touch(
                                 5 => { ad.pp_input.push_char(b' '); boot_display.draw_keyboard_screen(&ad.pp_input, "IMAGE DESCRIPTOR"); }
                                 6 => {
                                     // OK — grab text and go to preview
+                                    ad.clear_jpeg_description();
                                     let pp_str = ad.pp_input.as_str();
                                     let copy_len = pp_str.len().min(96);
                                     ad.jpeg_desc_buf[..copy_len].copy_from_slice(&pp_str.as_bytes()[..copy_len]);
@@ -287,6 +290,7 @@ pub fn handle_stego_touch(
                     }
                     crate::app::input::AppState::StegoJpegDescPreview => {
                         if is_back {
+                            ad.clear_jpeg_description();
                             ad.app.state = crate::app::input::AppState::StegoJpegDescChoice;
                             needs_redraw = true;
                         } else if (185..=225).contains(&y) {
@@ -298,6 +302,7 @@ pub fn handle_stego_touch(
                             needs_redraw = true;
                             } else if (20..=150).contains(&x) {
                                 // EDIT — go back to choice
+                                ad.clear_jpeg_description();
                                 ad.app.state = crate::app::input::AppState::StegoJpegDescChoice;
                             needs_redraw = true;
                             }
@@ -453,6 +458,7 @@ pub fn handle_stego_touch(
                             // Bottom area = confirm buttons
                             if (20..=150).contains(&x) {
                                 // CANCEL
+                                ad.clear_jpeg_description();
                                 ad.app.state = crate::app::input::AppState::ExportChoice;
                                 needs_redraw = true;
                             } else if (170..=300).contains(&x) {
@@ -574,6 +580,7 @@ pub fn handle_stego_touch(
                                         ad.app.state = crate::app::input::AppState::ExportChoice;
                             needs_redraw = true;
                                     }
+                                    ad.clear_jpeg_description();
                                     needs_redraw = true;
                                 }
                             }

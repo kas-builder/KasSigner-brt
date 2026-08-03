@@ -382,7 +382,7 @@ pub fn handle_menu_touch(
                                             delay.delay_millis(1500);
                                         } else {
                                             ad.pp_input.reset();
-                                            ad.jpeg_desc_len = 0;
+                                            ad.clear_jpeg_description();
                                             ad.app.state = crate::app::input::AppState::SignMsgChoice;
                                         }
                                     }
@@ -394,7 +394,6 @@ pub fn handle_menu_touch(
                                             delay.delay_millis(1500);
                                         } else {
                                             ad.pp_input.reset();
-                                            ad.jpeg_desc_len = 0;
                                             ad.clear_commit_reveal();
                                             ad.app.state = crate::app::input::AppState::CommitRevealType;
                                         }
@@ -407,7 +406,6 @@ pub fn handle_menu_touch(
                                             delay.delay_millis(1500);
                                         } else {
                                             ad.clear_commit_reveal();
-                                            ad.jpeg_desc_len = 0;
                                             ad.app.state = crate::app::input::AppState::DecryptSecretScan;
                                         }
                                     }

@@ -346,6 +346,7 @@ fn process_confirmed_qr(
         match decrypt_result {
             Ok(plaintext) => {
                 let copy_len = plaintext.len().min(ad.jpeg_desc_buf.len());
+                ad.clear_jpeg_description();
                 ad.jpeg_desc_buf[..copy_len].copy_from_slice(&plaintext[..copy_len]);
                 ad.jpeg_desc_len = copy_len;
                 sound::success(delay);

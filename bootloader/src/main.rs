@@ -712,6 +712,12 @@ fn main() -> ! {
     #[allow(unused_mut)]
     let mut ad: &mut AppData = &mut ad_box;
 
+    if !app::boot_test::test_appdata_secret_cleanup(ad) {
+        log!("   [FATAL] Secret-buffer cleanup self-test failed");
+        boot_display.show_panic_screen("SECRET WIPE FAILED").ok();
+        halt_forever(&mut delay);
+    }
+
     // Override cam_tune defaults for OV2640 — proven QR decode settings
     #[cfg(feature = "waveshare")]
     if unsafe { SENSOR_OV2640 } {

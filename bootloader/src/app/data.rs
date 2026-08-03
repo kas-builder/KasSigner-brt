@@ -621,6 +621,7 @@ pub fn new() -> Self {
         self.demo_tx.clear();
         wipe_u8(&mut self.signed_qr_buf);
         self.signed_qr_len = 0;
+        self.clear_jpeg_description();
         wipe_u8(&mut self.stego_pp_buf);
         self.stego_pp_len = 0;
         wipe_u8(&mut self.stego_pp_encrypted);
@@ -636,6 +637,17 @@ pub fn new() -> Self {
         wipe_vec(&mut self.cr_ciphertext);
         wipe_vec(&mut self.cr_part_a);
         wipe_vec(&mut self.cr_part_b);
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+    }
+
+    /// Erase the complete shared description/plaintext/password buffer.
+    /// Wiping the full capacity prevents a shorter later value from leaving
+    /// bytes from an earlier secret beyond `jpeg_desc_len`.
+    pub fn clear_jpeg_description(&mut self) {
+        for byte in self.jpeg_desc_buf.iter_mut() {
+            unsafe { core::ptr::write_volatile(byte, 0); }
+        }
+        self.jpeg_desc_len = 0;
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
     }
 
@@ -656,6 +668,7 @@ pub fn new() -> Self {
         self.cr_ciphertext.clear();
         self.cr_part_a.clear();
         self.cr_part_b.clear();
+        self.clear_jpeg_description();
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
     }
 }

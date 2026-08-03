@@ -383,6 +383,15 @@ pub fn run_phase1_tests(delay: &mut esp_hal::delay::Delay) {
     }
 }
 
+/// Prove that the shared secret-bearing AppData buffer is fully erased rather
+/// than only having its public length reset.
+pub fn test_appdata_secret_cleanup(ad: &mut crate::app::data::AppData) -> bool {
+    ad.jpeg_desc_buf.fill(0xA5);
+    ad.jpeg_desc_len = ad.jpeg_desc_buf.len();
+    ad.clear_jpeg_description();
+    ad.jpeg_desc_len == 0 && ad.jpeg_desc_buf.iter().all(|byte| *byte == 0)
+}
+
 /// Signing pipeline self-test — M5Stack only (called at boot)
 #[cfg(feature = "m5stack")]
 pub fn test_signing_pipeline(ad: &mut crate::app::data::AppData) -> bool {
