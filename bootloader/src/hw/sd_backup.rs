@@ -527,7 +527,6 @@ pub fn decrypt_raw_progress(
     }
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: a full 128-byte stego payload encrypts and decrypts without truncation.
 pub fn test_raw_128_byte_roundtrip() -> bool {
     let mut payload = [0u8; MAX_RAW_PAYLOAD];

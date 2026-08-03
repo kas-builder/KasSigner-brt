@@ -625,7 +625,6 @@ pub fn test_compact_seedqr_12() -> bool {
     indices[11] == 3
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: seed fingerprint computation.
 pub fn test_fingerprint() -> bool {
     let mut slot = SeedSlot::empty();
@@ -647,7 +646,6 @@ pub fn test_fingerprint() -> bool {
     slot.fingerprint == [0xC0, 0x8D, 0xDA, 0x51]
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: seed manager store/delete operations.
 pub fn test_seed_manager_store_delete() -> bool {
     let mut mgr = SeedManager::new();
@@ -665,7 +663,6 @@ pub fn test_seed_manager_store_delete() -> bool {
     true
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: passphrases are stored fully through 128 bytes and invalid lengths fail.
 pub fn test_passphrase_length_boundaries() -> bool {
     let mut mgr = SeedManager::new();
@@ -708,7 +705,6 @@ pub fn test_passphrase_length_boundaries() -> bool {
     mgr.store(&indices, 12, &passphrase[..64], 65).is_none()
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test that passphrase input cancellation erases the full backing buffer.
 pub fn test_passphrase_input_zeroize() -> bool {
     let mut input = PassphraseInput::new();
@@ -722,7 +718,6 @@ pub fn test_passphrase_input_zeroize() -> bool {
         && input.buf.iter().all(|byte| *byte == 0)
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test: a display-fingerprint collision does not merge different mnemonics.
 pub fn test_fingerprint_collision_does_not_merge_seeds() -> bool {
     let mut mgr = SeedManager::new();
@@ -760,6 +755,25 @@ pub fn test_fingerprint_collision_does_not_merge_seeds() -> bool {
     // An actual duplicate must still return the existing second slot.
     mgr.store(&indices_b, 12, b"", 0) == Some(second)
         && mgr.count() == 2
+}
+
+/// Run the seed and passphrase security tests required on every boot.
+pub fn run_seed_security_tests() -> (u32, u32) {
+    let results = [
+        ("fingerprint vectors", test_fingerprint()),
+        ("store and delete", test_seed_manager_store_delete()),
+        ("passphrase length bounds", test_passphrase_length_boundaries()),
+        ("passphrase input zeroization", test_passphrase_input_zeroize()),
+        ("fingerprint collision handling", test_fingerprint_collision_does_not_merge_seeds()),
+    ];
+    let total = results.len() as u32;
+    let mut passed = 0u32;
+    for (name, result) in results {
+        crate::log!("      Seed {}: {}", name, if result { "OK" } else { "FAIL" });
+        if result { passed += 1; }
+    }
+
+    (passed, total)
 }
 
 #[cfg(any(test, feature = "verbose-boot"))]

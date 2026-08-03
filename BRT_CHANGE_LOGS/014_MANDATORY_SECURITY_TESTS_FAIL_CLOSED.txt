@@ -1,0 +1,50 @@
+KASSIGNER SECURITY FIX RECORD 014
+
+Finding:
+Dice, passphrase, seed-manager, cleanup, and encrypted-payload security tests
+were optional verbose diagnostics and did not stop startup when they failed.
+
+Branch:
+fix/security-tests-fail-closed
+
+Affected files:
+bootloader/src/app/boot_test.rs
+bootloader/src/ui/setup_wizard.rs
+bootloader/src/ui/seed_manager.rs
+bootloader/src/hw/sd_backup.rs
+
+Before:
+The affected tests were compiled only for test or verbose-boot builds.
+Verbose startup printed CRITICAL when they failed but continued booting.
+Normal and production firmware did not execute these tests.
+
+After:
+Five dice tests run during every boot:
+target limits, 12-word golden vector, 24-word golden vector, 500-roll overflow
+and undo behavior, and dice-memory zeroization.
+
+Five seed/passphrase tests run during every boot:
+fingerprint vectors, seed storage/deletion, 128-byte passphrase boundaries,
+passphrase-input zeroization, and fingerprint-collision handling.
+
+The full 128-byte encrypted SD/steganographic round-trip runs during every boot.
+Each individual dice and seed test reports OK or FAIL in development/verbose
+serial output. Any failed mandatory test permanently stops startup. Firmware
+cannot continue into wallet operations after a security-test failure.
+
+Verification:
+Waveshare normal build passed.
+Waveshare verbose build passed.
+Waveshare production build passed.
+M5Stack normal build passed.
+M5Stack verbose build passed.
+M5Stack production build passed.
+Source search confirms the mandatory tests are no longer feature-gated.
+
+Hardware verification remaining:
+Flash the M5Stack verbose build and confirm all mandatory test lines report OK
+before committing or publishing this branch.
+
+Status:
+Implemented and compiled locally. Not committed or pushed at the time this
+record was created.

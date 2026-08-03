@@ -651,7 +651,6 @@ impl Drop for SetupWizard {
 // Tests
 // ═══════════════════════════════════════════════════════════════════
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test validated minimum and maximum targets for both word counts.
 pub fn test_dice_target_validation() -> bool {
     DiceCollector::new_12_word_with_target(99).is_none()
@@ -666,7 +665,6 @@ pub fn test_dice_target_validation() -> bool {
         && DiceCollector::new_24_word().word_count() == 24
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Golden vector: repeating 1..6 for 100 rolls produces an exact result.
 pub fn test_dice_entropy_12_golden() -> bool {
     let mut dice = DiceCollector::new_12_word();
@@ -681,7 +679,6 @@ pub fn test_dice_entropy_12_golden() -> bool {
     dice.extract_entropy_16() == Some(expected)
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Golden vector: repeating 1..6 for 200 rolls produces an exact result.
 pub fn test_dice_entropy_24_golden() -> bool {
     let mut dice = DiceCollector::new_24_word();
@@ -698,7 +695,6 @@ pub fn test_dice_entropy_24_golden() -> bool {
     dice.extract_entropy_32() == Some(expected)
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test the 500-roll boundary, overflow rejection, and undo behavior.
 pub fn test_dice_max_overflow_and_undo() -> bool {
     let Some(mut dice) = DiceCollector::new_12_word_with_target(500) else {
@@ -734,7 +730,6 @@ pub fn test_dice_max_overflow_and_undo() -> bool {
         && dice.is_complete()
 }
 
-#[cfg(any(test, feature = "verbose-boot"))]
 /// Test that cancellation-style cleanup removes every recorded roll, not only
 /// the public progress counter.
 pub fn test_dice_zeroize() -> bool {
@@ -746,6 +741,25 @@ pub fn test_dice_zeroize() -> bool {
     }
     dice.zeroize();
     dice.count == 0 && dice.rolls.iter().all(|value| *value == 0)
+}
+
+/// Run the dice security tests required on every boot.
+pub fn run_dice_security_tests() -> (u32, u32) {
+    let results = [
+        ("target bounds", test_dice_target_validation()),
+        ("12-word golden vector", test_dice_entropy_12_golden()),
+        ("24-word golden vector", test_dice_entropy_24_golden()),
+        ("500-roll overflow and undo", test_dice_max_overflow_and_undo()),
+        ("roll memory zeroization", test_dice_zeroize()),
+    ];
+    let total = results.len() as u32;
+    let mut passed = 0u32;
+    for (name, result) in results {
+        crate::log!("      Dice {}: {}", name, if result { "OK" } else { "FAIL" });
+        if result { passed += 1; }
+    }
+
+    (passed, total)
 }
 
 #[cfg(any(test, feature = "verbose-boot"))]

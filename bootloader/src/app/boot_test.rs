@@ -199,6 +199,35 @@ pub fn run_phase1_tests(delay: &mut esp_hal::delay::Delay) {
         }
     }
 
+    let (dice_passed, dice_total) = setup_wizard::run_dice_security_tests();
+    log!("   Mandatory dice tests: {}/{} passed", dice_passed, dice_total);
+    if dice_passed != dice_total {
+        log!("   CRITICAL: Mandatory dice security test failed.");
+        log!("   Cannot continue safely.");
+        loop {
+            delay.delay_millis(1000);
+        }
+    }
+
+    let (seed_passed, seed_total) = seed_manager::run_seed_security_tests();
+    log!("   Mandatory seed tests: {}/{} passed", seed_passed, seed_total);
+    if seed_passed != seed_total {
+        log!("   CRITICAL: Mandatory seed or passphrase security test failed.");
+        log!("   Cannot continue safely.");
+        loop {
+            delay.delay_millis(1000);
+        }
+    }
+
+    if !crate::hw::sd_backup::test_raw_128_byte_roundtrip() {
+        log!("   CRITICAL: Mandatory 128-byte encrypted payload test failed.");
+        log!("   Cannot continue safely.");
+        loop {
+            delay.delay_millis(1000);
+        }
+    }
+    log!("   Mandatory encrypted payload test: passed");
+
     if !crate::features::verify::test_signature_metadata_policy() {
         log!("   CRITICAL: Firmware signature metadata policy failed.");
         loop {
