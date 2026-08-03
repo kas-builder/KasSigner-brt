@@ -315,6 +315,12 @@ fn hash_code_segment(file_data: &[u8], data_offset: usize, seg_size: usize, load
         let mut privkey = [0u8; 32];
         privkey.copy_from_slice(&key_data);
 
+        if let Err(e) = validate_signing_key(&privkey) {
+            privkey.fill(0);
+            eprintln!("  ERROR: {}", e);
+            std::process::exit(1);
+        }
+
         match schnorr_sign(&privkey, &hash_bytes) {
             Ok(sig) => {
                 sig_bytes = sig;
@@ -420,9 +426,62 @@ fn schnorr_sign(privkey: &[u8; 32], message: &[u8; 32]) -> Result<[u8; 64], Stri
     Ok(signature.to_bytes())
 }
 
+fn validate_signing_key(privkey: &[u8; 32]) -> Result<(), String> {
+    let signing_key = SigningKey::from_bytes(privkey)
+        .map_err(|e| format!("Invalid private key: {}", e))?;
+    let expected = read_firmware_public_key()?;
+    let actual: [u8; 32] = signing_key.verifying_key().to_bytes().into();
+    if actual != expected {
+        return Err(
+            "Signing key does not match bootloader/src/features/fw_update.rs DEV_PUBKEY"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn read_firmware_public_key() -> Result<[u8; 32], String> {
+    let source = [
+        "bootloader/src/features/fw_update.rs",
+        "../bootloader/src/features/fw_update.rs",
+    ]
+    .iter()
+    .find_map(|path| fs::read_to_string(path).ok())
+    .ok_or_else(|| "Cannot read bootloader/src/features/fw_update.rs".to_string())?;
+    let marker = "pub const DEV_PUBKEY";
+    let declaration = source
+        .split_once(marker)
+        .map(|(_, rest)| rest)
+        .ok_or_else(|| "Firmware DEV_PUBKEY declaration was not found".to_string())?;
+    let array = declaration
+        .split_once("];\n")
+        .map(|(value, _)| value)
+        .ok_or_else(|| "Firmware DEV_PUBKEY array is malformed".to_string())?;
+
+    let mut parsed = [0u8; 32];
+    let mut count = 0usize;
+    for token in array.split(|ch: char| !(ch.is_ascii_hexdigit() || ch == 'x')) {
+        if let Some(hex) = token.strip_prefix("0x") {
+            if hex.len() == 2 && count < parsed.len() {
+                parsed[count] = u8::from_str_radix(hex, 16)
+                    .map_err(|_| "Firmware DEV_PUBKEY contains invalid hex".to_string())?;
+                count += 1;
+            }
+        }
+    }
+
+    if count != parsed.len() || parsed.iter().all(|byte| *byte == 0) {
+        return Err(format!(
+            "Firmware DEV_PUBKEY must contain exactly 32 nonzero configured bytes; found {}",
+            count
+        ));
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::schnorr_sign;
+    use super::{read_firmware_public_key, schnorr_sign, validate_signing_key};
 
     #[test]
     fn signing_matches_official_bip340_vector_0() {
@@ -434,6 +493,18 @@ mod tests {
         );
 
         assert_eq!(schnorr_sign(&private_key, &[0u8; 32]).unwrap(), expected_signature);
+    }
+
+    #[test]
+    fn rejects_key_that_does_not_match_firmware_public_key() {
+        let wrong_key = [0u8; 31]
+            .into_iter()
+            .chain([3u8])
+            .collect::<Vec<_>>();
+        let wrong_key: [u8; 32] = wrong_key.try_into().unwrap();
+        let configured_key = read_firmware_public_key();
+        assert!(configured_key.is_ok(), "{configured_key:?}");
+        assert!(validate_signing_key(&wrong_key).is_err());
     }
 
     fn hex_to_array<const N: usize>(hex: &[u8]) -> [u8; N] {

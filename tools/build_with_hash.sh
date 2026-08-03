@@ -15,33 +15,71 @@ cd "$(dirname "$0")/.."
 ELF="bootloader/target/xtensa-esp32s3-none-elf/release/kassigner-bootloader"
 BIN="bootloader/target/xtensa-esp32s3-none-elf/release/kassigner-bootloader.bin"
 
-# ── Parse arguments ─────────────────────────────────────────
-# Usage: build_with_hash.sh [production] [--key path/to/dev_signing_key.bin]
-FEATURES=""
+# Usage: build_with_hash.sh [development|production]
+#        [--board waveshare|m5stack] [--key path/to/signing_key.bin]
+MODE="development"
+BOARD="waveshare"
 SIGNING_KEY=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         production)
-            FEATURES="--features production"
-            echo "  Mode: PRODUCTION (silent + strict verification + signed)"
+            MODE="production"
             shift
             ;;
+        development)
+            MODE="development"
+            shift
+            ;;
+        --board)
+            if [ $# -lt 2 ]; then
+                echo "ERROR: --board requires waveshare or m5stack" >&2
+                exit 2
+            fi
+            BOARD="$2"
+            shift 2
+            ;;
         --key)
+            if [ $# -lt 2 ]; then
+                echo "ERROR: --key requires a file path" >&2
+                exit 2
+            fi
             SIGNING_KEY="$2"
             shift 2
             ;;
         *)
-            shift
+            echo "ERROR: Unknown argument: $1" >&2
+            echo "Usage: $0 [development|production] [--board waveshare|m5stack] [--key path]" >&2
+            exit 2
             ;;
     esac
 done
 
-if [ -z "$FEATURES" ]; then
-    echo "  Mode: DEVELOPMENT"
-fi
+case "$BOARD" in
+    waveshare)
+        if [ "$MODE" = "production" ]; then
+            BUILD_ARGS=(--release --features production)
+        else
+            BUILD_ARGS=(--release)
+        fi
+        ;;
+    m5stack)
+        if [ "$MODE" = "production" ]; then
+            BUILD_ARGS=(--release --no-default-features --features m5stack,production)
+        else
+            BUILD_ARGS=(--release --no-default-features --features m5stack)
+        fi
+        ;;
+    *)
+        echo "ERROR: Unsupported board '$BOARD'; expected waveshare or m5stack" >&2
+        exit 2
+        ;;
+esac
 
-# Auto-detect signing key if not specified
+echo "  Mode: $MODE"
+echo "  Board: $BOARD"
+
+# Auto-detect a signing key only when --key was not supplied.
 if [ -z "$SIGNING_KEY" ]; then
     for candidate in \
         "dev_signing_key.bin" \
@@ -55,81 +93,121 @@ if [ -z "$SIGNING_KEY" ]; then
     done
 fi
 
-if [ -n "$SIGNING_KEY" ] && [ -f "$SIGNING_KEY" ]; then
-    echo "  Signing key: $SIGNING_KEY"
+SIGN_ARG=""
+if [ -n "$SIGNING_KEY" ]; then
+    if [ ! -f "$SIGNING_KEY" ]; then
+        echo "ERROR: Signing key does not exist: $SIGNING_KEY" >&2
+        exit 1
+    fi
+    KEY_SIZE=$(wc -c < "$SIGNING_KEY" | tr -d ' ')
+    if [ "$KEY_SIZE" -ne 32 ]; then
+        echo "ERROR: Signing key must be exactly 32 bytes; got $KEY_SIZE" >&2
+        exit 1
+    fi
     SIGN_ARG="$SIGNING_KEY"
+fi
+
+if [ "$MODE" = "production" ] && [ -z "$SIGN_ARG" ]; then
+    echo "ERROR: Production builds require a valid 32-byte signing key" >&2
+    exit 1
+fi
+
+if [ -n "$SIGN_ARG" ]; then
+    echo "  Signing: enabled"
 else
-    echo "  Signing key: NONE (unsigned development build)"
-    SIGN_ARG=""
+    echo "  Signing: disabled (development only)"
 fi
 echo ""
 
-# ── Step 1: First compilation ───────────────────────────────
-echo "[1] Compiling bootloader (first pass)..."
-cd bootloader
-cargo build --release $FEATURES 2>&1 | grep -E "Compiling|Finished|error"
-cd ..
+build_firmware() {
+    (
+        cd bootloader
+        cargo build "${BUILD_ARGS[@]}"
+    )
+}
 
-# ── Iteration: hash → sign → embed → recompile → verify ────
+run_hash_tool() {
+    if [ -n "$SIGN_ARG" ]; then
+        cargo run --manifest-path tools/Cargo.toml --bin gen-hash -- "$BIN" "$SIGN_ARG"
+    else
+        cargo run --manifest-path tools/Cargo.toml --bin gen-hash -- "$BIN"
+    fi
+}
+
+echo "[1] Compiling bootloader (first pass)..."
+build_firmware
+
 MAX_ITERATIONS=5
 PREV_HASH=""
+CURRENT_HASH=""
+CONVERGED=false
 
 for i in $(seq 1 $MAX_ITERATIONS); do
     echo ""
     echo "── Iteration $i/$MAX_ITERATIONS ──────────────────────────"
 
-    # Generate .bin
-    espflash save-image --chip esp32s3 "$ELF" "$BIN" 2>&1 | grep -v "INFO"
-
-    # Compute hash + sign (if key available)
-    if [ -n "$SIGN_ARG" ]; then
-        HASH_OUTPUT=$(cargo run --manifest-path tools/Cargo.toml --bin gen-hash -- "$BIN" "$SIGN_ARG" 2>&1)
-    else
-        HASH_OUTPUT=$(cargo run --manifest-path tools/Cargo.toml --bin gen-hash -- "$BIN" 2>&1)
-    fi
+    espflash save-image --chip esp32s3 "$ELF" "$BIN"
+    HASH_OUTPUT=$(run_hash_tool 2>&1)
     CURRENT_HASH=$(echo "$HASH_OUTPUT" | grep "SHA256:" | awk '{print $2}')
     SEG_SIZE=$(echo "$HASH_OUTPUT" | grep "Segment size:" | awk '{print $3}')
     SIGNED=$(echo "$HASH_OUTPUT" | grep "Status:" | head -1)
+
+    if [ -z "$CURRENT_HASH" ] || [ -z "$SEG_SIZE" ]; then
+        echo "ERROR: Hash tool did not return complete firmware metadata" >&2
+        echo "$HASH_OUTPUT" >&2
+        exit 1
+    fi
 
     echo "   Hash: ${CURRENT_HASH:0:16}..."
     echo "   Segment: $SEG_SIZE bytes"
     [ -n "$SIGNED" ] && echo "   $SIGNED"
 
-    # Converged?
     if [ "$CURRENT_HASH" = "$PREV_HASH" ]; then
         echo ""
         echo "   CONVERGED at iteration $i"
         echo "   Stable hash: $CURRENT_HASH"
+        CONVERGED=true
         break
     fi
 
     PREV_HASH="$CURRENT_HASH"
-
-    # Recompile with embedded hash + signature
     echo "   Recompiling with embedded hash..."
-    cd bootloader
-    cargo build --release $FEATURES 2>&1 | grep -E "Compiling|Finished|error"
-    cd ..
-
-    if [ $i -eq $MAX_ITERATIONS ]; then
-        echo ""
-        echo "   WARNING: Did not converge after $MAX_ITERATIONS iterations."
-    fi
+    build_firmware
 done
 
-# ── Generate final .bin ─────────────────────────────────────
+if [ "$CONVERGED" != true ]; then
+    echo "ERROR: Firmware hash did not converge after $MAX_ITERATIONS iterations" >&2
+    exit 1
+fi
+
 echo ""
-echo "[Final] Generating final .bin..."
-espflash save-image --chip esp32s3 "$ELF" "$BIN" 2>&1 | grep -v "INFO"
+echo "[Final] Generating and verifying final .bin..."
+espflash save-image --chip esp32s3 "$ELF" "$BIN"
+FINAL_OUTPUT=$(run_hash_tool 2>&1)
+FINAL_HASH=$(echo "$FINAL_OUTPUT" | grep "SHA256:" | awk '{print $2}')
+FINAL_STATUS=$(echo "$FINAL_OUTPUT" | grep "Status:" | head -1)
+
+if [ -z "$FINAL_HASH" ] || [ "$FINAL_HASH" != "$CURRENT_HASH" ]; then
+    echo "ERROR: Final binary hash does not match the converged hash" >&2
+    exit 1
+fi
+
+if [ "$MODE" = "production" ] && ! echo "$FINAL_STATUS" | grep -q "SIGNED (production-ready)"; then
+    echo "ERROR: Final production binary is not signed" >&2
+    exit 1
+fi
 
 echo ""
 echo "════════════════════════════════════════════════"
 echo "  BUILD COMPLETE"
 echo "════════════════════════════════════════════════"
 echo ""
-echo "  Hash: ${CURRENT_HASH:0:16}..."
-if [ -n "$SIGN_ARG" ]; then
-    echo "  Status: SIGNED"
+echo "  Board: $BOARD"
+echo "  Hash: ${FINAL_HASH:0:16}..."
+if [ "$MODE" = "production" ]; then
+    echo "  Status: SIGNED (production)"
+elif [ -n "$SIGN_ARG" ]; then
+    echo "  Status: SIGNED (development)"
 else
     echo "  Status: UNSIGNED (development)"
 fi

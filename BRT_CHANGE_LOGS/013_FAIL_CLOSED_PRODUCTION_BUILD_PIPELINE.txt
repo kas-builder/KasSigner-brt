@@ -1,0 +1,51 @@
+KASSIGNER SECURITY FIX RECORD 013
+
+Finding:
+The firmware build script could report success for unusable output.
+
+Branch:
+fix/fail-closed-production-build
+
+Affected files:
+tools/build_with_hash.sh
+tools/gen_hash.rs
+
+Before:
+The script continued after hash convergence failed.
+Production mode could continue without a signing key.
+Unknown arguments were silently ignored.
+Only the default board was supported.
+The final binary was not independently checked after generation.
+A structurally valid but incorrect signing key could produce output labelled
+signed even though the firmware's embedded public key would reject it.
+
+After:
+The script exits with an error when convergence fails.
+Production mode requires an existing, exactly 32-byte signing key.
+Unknown or incomplete arguments are rejected.
+Waveshare and M5Stack builds are selected explicitly.
+The final binary is regenerated, hashed, and compared with the converged hash.
+Production completion requires signed status.
+The signing tool derives the supplied key's BIP340 public key and requires it
+to match the DEV_PUBKEY embedded in the firmware.
+
+Verification:
+Bash syntax validation passed.
+Unknown argument rejection passed.
+Unsupported board rejection passed.
+Missing --key value rejection passed.
+Missing key file rejection passed.
+Production-without-key rejection passed.
+Wrong-but-valid 32-byte key rejection passed before firmware metadata changed.
+The complete isolated M5Stack development pipeline converged at iteration 4.
+The final generated binary hash matched the converged hash.
+Both gen-hash unit tests passed, including official BIP340 vector 0.
+
+Limitation:
+A complete production build using the real developer private key was not run
+because that private key is not available in this workspace. The script now
+refuses every substitute key rather than falsely reporting success.
+
+Status:
+Implemented and tested locally. Not committed or pushed at the time this record
+was created.
