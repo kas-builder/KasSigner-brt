@@ -1,0 +1,37 @@
+KASSIGNER SECURITY FIX RECORD 012
+
+Finding:
+Production firmware signing used a different Schnorr formula than firmware verification.
+
+Branch:
+fix/production-signature-pipeline
+
+Affected files:
+tools/Cargo.toml
+tools/gen_hash.rs
+
+Before:
+The firmware signing tool manually generated a nonce and calculated an untagged
+SHA-256 challenge. The firmware verifier used the standard BIP340 implementation
+provided by k256. A signature produced by the tool was therefore incompatible
+with the verifier.
+
+After:
+The tool uses the same k256 BIP340 SigningKey and sign_raw operation as the
+firmware. The custom nonce, point arithmetic, and challenge implementation were
+removed.
+
+Failure behavior:
+An invalid private key or signing failure returns an error. No custom or weak
+fallback signer remains.
+
+Verification:
+The signing tool has a unit test using official BIP340 test vector 0.
+The generated 64-byte signature must exactly match the official expected value.
+The test passes.
+The gen-hash tool compiles successfully.
+The removed custom signing functions no longer exist in the tool.
+
+Status:
+Implemented and tested locally. Not committed or pushed at the time this record
+was created.

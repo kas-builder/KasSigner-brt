@@ -48,16 +48,7 @@ use sha2::{Sha256, Digest};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use k256::{
-    SecretKey,
-    Scalar,
-    ProjectivePoint,
-    elliptic_curve::{
-        sec1::ToEncodedPoint,
-        ops::Reduce,
-        ScalarPrimitive,
-    },
-};
+use k256::schnorr::SigningKey;
 
 /// Instruction bus range for flash-mapped memory on ESP32-S3
 const IRAM_FLASH_BASE: u32 = 0x4200_0000;
@@ -421,99 +412,45 @@ pub const FIRMWARE_HASH_HEX: &str = "{hash_hex}";
 // ─── Schnorr signing (BIP340-compatible, secp256k1) ─────────────────
 
 fn schnorr_sign(privkey: &[u8; 32], message: &[u8; 32]) -> Result<[u8; 64], String> {
-    let sk = SecretKey::from_slice(privkey)
+    let signing_key = SigningKey::from_bytes(privkey)
         .map_err(|e| format!("Invalid private key: {}", e))?;
-
-    let d_scalar: Scalar = (*sk.to_nonzero_scalar()).into();
-
-    let pubkey_point = ProjectivePoint::GENERATOR * d_scalar;
-    let pubkey_affine = pubkey_point.to_affine();
-
-    // BIP340: negate d if Y is odd
-    let d = if has_even_y(&pubkey_affine) { d_scalar } else { d_scalar.negate() };
-
-    let px = x_bytes(&pubkey_affine);
-
-    // RFC6979 deterministic nonce
-    let k_scalar = generate_rfc6979_nonce(privkey, message)?;
-
-    let r_point = (ProjectivePoint::GENERATOR * k_scalar).to_affine();
-    let k = if has_even_y(&r_point) { k_scalar } else { k_scalar.negate() };
-    let rx = x_bytes(&r_point);
-
-    // e = SHA256(R.x || P.x || message) mod n
-    let e = compute_challenge(&rx, &px, message);
-
-    // s = k + e * d (mod n)
-    let s = k + (e * d);
-
-    let mut sig = [0u8; 64];
-    sig[..32].copy_from_slice(&rx);
-    sig[32..].copy_from_slice(&scalar_to_bytes(&s));
-    Ok(sig)
+    let signature = signing_key
+        .sign_raw(message, &[0u8; 32])
+        .map_err(|e| format!("BIP340 signing failed: {}", e))?;
+    Ok(signature.to_bytes())
 }
 
-fn has_even_y(point: &k256::AffinePoint) -> bool {
-    let encoded = point.to_encoded_point(false);
-    let y_bytes = encoded.y().expect("not identity");
-    y_bytes[31] & 1 == 0
-}
+#[cfg(test)]
+mod tests {
+    use super::schnorr_sign;
 
-fn x_bytes(point: &k256::AffinePoint) -> [u8; 32] {
-    let encoded = point.to_encoded_point(true);
-    let mut x = [0u8; 32];
-    x.copy_from_slice(&encoded.as_bytes()[1..33]);
-    x
-}
+    #[test]
+    fn signing_matches_official_bip340_vector_0() {
+        let private_key = hex_to_array::<32>(
+            b"0000000000000000000000000000000000000000000000000000000000000003",
+        );
+        let expected_signature = hex_to_array::<64>(
+            b"E907831F80848D1069A5371B402410364BDF1C5F8307B0084C55F1CE2DCA821525F66A4A85EA8B71E482A74F382D2CE5EBEEE8FDB2172F477DF4900D310536C0",
+        );
 
-fn scalar_to_bytes(s: &Scalar) -> [u8; 32] {
-    let primitive: ScalarPrimitive<k256::Secp256k1> = (*s).into();
-    primitive.to_bytes().into()
-}
-
-fn generate_rfc6979_nonce(privkey: &[u8; 32], message: &[u8; 32]) -> Result<Scalar, String> {
-    use sha2::{Sha256, Digest};
-
-    // HMAC-SHA256 based nonce: k = HMAC(privkey, SHA256(privkey || message))
-    let mut seed_hasher = Sha256::new();
-    seed_hasher.update(privkey);
-    seed_hasher.update(message);
-    let seed = seed_hasher.finalize();
-
-    // Simple HMAC: H(key XOR opad || H(key XOR ipad || message))
-    let mut ipad = [0x36u8; 64];
-    let mut opad = [0x5cu8; 64];
-    for i in 0..32 {
-        ipad[i] ^= seed[i];
-        opad[i] ^= seed[i];
+        assert_eq!(schnorr_sign(&private_key, &[0u8; 32]).unwrap(), expected_signature);
     }
 
-    let mut inner = Sha256::new();
-    inner.update(&ipad);
-    inner.update(message);
-    let inner_hash = inner.finalize();
-
-    let mut outer = Sha256::new();
-    outer.update(&opad);
-    outer.update(&inner_hash);
-    let k_bytes: [u8; 32] = outer.finalize().into();
-
-    let k_uint = k256::U256::from_be_slice(&k_bytes);
-    let k_scalar = <Scalar as Reduce<k256::U256>>::reduce(k_uint);
-
-    if k_scalar.is_zero().into() {
-        return Err("Zero nonce generated".to_string());
+    fn hex_to_array<const N: usize>(hex: &[u8]) -> [u8; N] {
+        assert_eq!(hex.len(), N * 2);
+        let mut out = [0u8; N];
+        for (index, byte) in out.iter_mut().enumerate() {
+            *byte = (nibble(hex[index * 2]) << 4) | nibble(hex[index * 2 + 1]);
+        }
+        out
     }
-    Ok(k_scalar)
-}
 
-fn compute_challenge(rx: &[u8; 32], px: &[u8; 32], message: &[u8; 32]) -> Scalar {
-    use sha2::{Sha256, Digest};
-    let mut hasher = Sha256::new();
-    hasher.update(rx);
-    hasher.update(px);
-    hasher.update(message);
-    let e_bytes: [u8; 32] = hasher.finalize().into();
-    let e_uint = k256::U256::from_be_slice(&e_bytes);
-    <Scalar as Reduce<k256::U256>>::reduce(e_uint)
+    fn nibble(value: u8) -> u8 {
+        match value {
+            b'0'..=b'9' => value - b'0',
+            b'a'..=b'f' => value - b'a' + 10,
+            b'A'..=b'F' => value - b'A' + 10,
+            _ => panic!("invalid hexadecimal test vector"),
+        }
+    }
 }
