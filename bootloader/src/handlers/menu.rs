@@ -636,7 +636,7 @@ pub fn handle_menu_touch(
 
                                         if let Err(e) = crate::crypto::entropy::fill(&mut pool) {
                                             log!("[SECURITY] Secure RNG failed during seed generation: {:?}", e);
-                                            boot_display.draw_rejected_screen("Secure RNG failed");
+                                            boot_display.draw_rejected_screen(e.user_message());
                                             sound::beep_error(delay);
                                             delay.delay_millis(2000);
                                             ad.app.state = crate::app::input::AppState::ToolsMenu;

@@ -805,7 +805,7 @@ pub fn handle_tx_touch(
                                         let mut salt = [0u8; 8];
                                         if let Err(e) = crate::crypto::entropy::fill(&mut salt) {
                                             log!("[SECURITY] Secure RNG failed: {:?}", e);
-                                            boot_display.draw_rejected_screen("Secure RNG failed");
+                                            boot_display.draw_rejected_screen(e.user_message());
                                             sound::beep_error(delay);
                                             delay.delay_millis(2000);
                                             return Some(true);
@@ -864,7 +864,7 @@ pub fn handle_tx_touch(
                             let mut rng_bytes = [0u8; 44];
                             if let Err(e) = crate::crypto::entropy::fill(&mut rng_bytes) {
                                 log!("[SECURITY] Secure RNG failed: {:?}", e);
-                                boot_display.draw_rejected_screen("Secure RNG failed");
+                                boot_display.draw_rejected_screen(e.user_message());
                                 sound::beep_error(delay);
                                 delay.delay_millis(2000);
                                 ad.clear_jpeg_description();

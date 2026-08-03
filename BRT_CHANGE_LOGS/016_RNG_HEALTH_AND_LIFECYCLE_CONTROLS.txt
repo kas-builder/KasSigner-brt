@@ -1,0 +1,67 @@
+KASSIGNER SECURITY FIX RECORD 016
+
+Finding:
+The central HMAC-DRBG had no standards-based request limit, no repeated-output
+detection, and no permanent failure state after a catastrophic generator error.
+
+Branch:
+fix/rng-health-and-lifecycle
+
+Affected files:
+bootloader/src/crypto/entropy.rs
+bootloader/src/handlers/menu.rs
+bootloader/src/handlers/sd.rs
+bootloader/src/handlers/tx.rs
+
+Authoritative basis:
+Espressif documents that applications which cannot leave the SAR-ADC entropy
+source enabled should collect true hardware entropy while it is enabled, seed a
+strong HMAC-DRBG, then release the ADC before other ADC use.
+NIST SP 800-90A specifies a 65,536-byte maximum per HMAC_DRBG request and a
+2^48 request reseed interval.
+NIST SP 800-90B health tests apply to raw noise-source samples. ESP-HAL exposes
+conditioned RNG output rather than raw SAR-ADC noise, so this change does not
+claim formal SP 800-90B validation.
+
+Before:
+The request counter was limited only by u64 overflow.
+One request could ask for an unlimited output length.
+Repeated internal 64-byte generator blocks were not detected.
+A catastrophic generator failure had no permanent failed state.
+The startup check allowed two consecutive identical 32-bit output words.
+
+After:
+Each request is limited to 65,536 bytes.
+The generator stops at the 2^48 request reseed boundary.
+Because ADC1 cannot be safely reacquired after Waveshare battery ADC setup,
+reaching that boundary permanently disables the generator and requires reboot.
+Every internal 64-byte output block is compared with the previous block.
+An exact repeat erases generator state, returns an error, and permanently blocks
+all later requests until reboot.
+The startup check rejects any consecutive identical 32-bit output words, fully
+constant output, and repeated 32-byte blocks.
+Every failed fill still erases the caller output and returns an explicit error.
+Permanent lifecycle failures display Restart required instead of suggesting the
+operation can safely continue.
+
+Verification:
+The mandatory entropy self-test count increased from six to nine.
+New tests verify the maximum request boundary, simulated repeated-output failure,
+permanent failed state, reseed boundary, and restart-required behavior.
+Existing two exact HMAC-DRBG golden vectors remain unchanged.
+Waveshare normal, verbose, and production builds passed.
+M5Stack normal, verbose, and production builds passed.
+
+Important limitation:
+This is not live hardware reseeding and is not described as formal SP 800-90B
+certification. Safe live reseeding would require a redesigned ADC ownership and
+battery-measurement architecture. The current fail-closed reboot requirement is
+used instead of unsafe ADC sharing or pseudo-random fallback.
+
+Hardware verification remaining:
+Flash the M5Stack verbose build and confirm all nine mandatory entropy self-tests
+pass at startup.
+
+Status:
+Implemented and compiled locally. Not committed or pushed at the time this
+record was created.

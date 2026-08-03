@@ -386,7 +386,7 @@ pub fn handle_sd_touch(
                                         Ok(nonce) => nonce,
                                         Err(e) => {
                                             log!("[SECURITY] Secure RNG failed: {:?}", e);
-                                            boot_display.draw_rejected_screen("Secure RNG failed");
+                                            boot_display.draw_rejected_screen(e.user_message());
                                             sound::beep_error(delay);
                                             delay.delay_millis(2000);
                                             return Some(true);
@@ -1021,7 +1021,7 @@ pub fn handle_sd_touch(
                                                 Ok(nonce) => nonce,
                                                 Err(e) => {
                                                     log!("[SECURITY] Secure RNG failed: {:?}", e);
-                                                    boot_display.draw_rejected_screen("Secure RNG failed");
+                                                    boot_display.draw_rejected_screen(e.user_message());
                                                     sound::beep_error(delay);
                                                     delay.delay_millis(2000);
                                                     zeroize_buf(&mut xprv_buf);
@@ -2158,7 +2158,7 @@ pub fn handle_sd_touch(
                                             Ok(nonce) => nonce,
                                             Err(e) => {
                                                 log!("[SECURITY] Secure RNG failed: {:?}", e);
-                                                boot_display.draw_rejected_screen("Secure RNG failed");
+                                                boot_display.draw_rejected_screen(e.user_message());
                                                 sound::beep_error(delay);
                                                 delay.delay_millis(2000);
                                                 return Some(true);

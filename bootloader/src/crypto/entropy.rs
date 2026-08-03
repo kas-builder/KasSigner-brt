@@ -24,6 +24,11 @@ use esp_hal::{
 use crate::wallet::hmac::{hmac_sha512, zeroize_buf};
 
 const SEED_LEN: usize = 96;
+/// SP 800-90A HMAC_DRBG maximum number of bytes returned per request.
+const MAX_BYTES_PER_REQUEST: usize = 1 << 16;
+/// SP 800-90A HMAC_DRBG reseed interval. This device cannot safely reacquire
+/// ADC1 after battery initialization, so reaching this limit requires reboot.
+const RESEED_INTERVAL: u64 = 1 << 48;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EntropyError {
@@ -32,12 +37,31 @@ pub enum EntropyError {
     HardwareHealthTestFailed,
     NotInitialized,
     GeneratorBusy,
-    RequestCounterExhausted,
+    RequestTooLarge,
+    ReseedRequired,
+    ContinuousHealthTestFailed,
+    GeneratorFailed,
+}
+
+impl EntropyError {
+    /// Short recovery instruction suitable for the device error screen.
+    pub const fn user_message(self) -> &'static str {
+        match self {
+            Self::ReseedRequired
+            | Self::ContinuousHealthTestFailed
+            | Self::GeneratorFailed
+            | Self::NotInitialized => "Restart required",
+            _ => "Secure RNG failed",
+        }
+    }
 }
 
 struct HmacDrbg {
     key: [u8; 64],
     value: [u8; 64],
+    last_block: [u8; 64],
+    have_last_block: bool,
+    failed: bool,
     requests: u64,
 }
 
@@ -46,6 +70,9 @@ impl HmacDrbg {
         let mut drbg = Self {
             key: [0u8; 64],
             value: [1u8; 64],
+            last_block: [0u8; 64],
+            have_last_block: false,
+            failed: false,
             requests: 0,
         };
         drbg.update(seed);
@@ -73,17 +100,44 @@ impl HmacDrbg {
     }
 
     fn generate(&mut self, out: &mut [u8]) -> Result<(), EntropyError> {
-        self.requests = self
-            .requests
-            .checked_add(1)
-            .ok_or(EntropyError::RequestCounterExhausted)?;
+        if self.failed {
+            return Err(EntropyError::GeneratorFailed);
+        }
+        validate_request_len(out.len())?;
+        if self.requests >= RESEED_INTERVAL {
+            self.fail_permanently();
+            return Err(EntropyError::ReseedRequired);
+        }
 
         for chunk in out.chunks_mut(64) {
             self.value = hmac_sha512(&self.key, &self.value);
+            if self.have_last_block && self.value == self.last_block {
+                self.fail_permanently();
+                return Err(EntropyError::ContinuousHealthTestFailed);
+            }
+            self.last_block.copy_from_slice(&self.value);
+            self.have_last_block = true;
             chunk.copy_from_slice(&self.value[..chunk.len()]);
         }
 
         self.update(&[]);
+        self.requests += 1;
+        Ok(())
+    }
+
+    fn fail_permanently(&mut self) {
+        zeroize_buf(&mut self.key);
+        zeroize_buf(&mut self.value);
+        zeroize_buf(&mut self.last_block);
+        self.have_last_block = false;
+        self.failed = true;
+    }
+}
+
+fn validate_request_len(length: usize) -> Result<(), EntropyError> {
+    if length > MAX_BYTES_PER_REQUEST {
+        Err(EntropyError::RequestTooLarge)
+    } else {
         Ok(())
     }
 }
@@ -92,6 +146,9 @@ impl Drop for HmacDrbg {
     fn drop(&mut self) {
         zeroize_buf(&mut self.key);
         zeroize_buf(&mut self.value);
+        zeroize_buf(&mut self.last_block);
+        self.have_last_block = false;
+        self.failed = true;
         self.requests = 0;
     }
 }
@@ -107,12 +164,11 @@ fn hardware_health_check(seed: &[u8; SEED_LEN]) -> bool {
         return false;
     }
 
-    for words in seed
+    let words = seed
         .chunks_exact(4)
-        .collect::<heapless::Vec<_, 24>>()
-        .windows(3)
-    {
-        if words[0] == words[1] && words[1] == words[2] {
+        .collect::<heapless::Vec<_, 24>>();
+    for adjacent in words.windows(2) {
+        if adjacent[0] == adjacent[1] {
             return false;
         }
     }
@@ -195,7 +251,7 @@ pub fn run_self_tests() -> (u32, u32) {
     ];
 
     let mut passed = 0u32;
-    let total = 6u32;
+    let total = 9u32;
 
     let mut seed = [0u8; SEED_LEN];
     for (index, byte) in seed.iter_mut().enumerate() {
@@ -234,11 +290,38 @@ pub fn run_self_tests() -> (u32, u32) {
         passed += 1;
     }
 
+    if validate_request_len(MAX_BYTES_PER_REQUEST).is_ok()
+        && validate_request_len(MAX_BYTES_PER_REQUEST + 1)
+            == Err(EntropyError::RequestTooLarge)
+    {
+        passed += 1;
+    }
+
+    let mut repeated_output = HmacDrbg::new(&seed);
+    repeated_output.last_block = hmac_sha512(&repeated_output.key, &repeated_output.value);
+    repeated_output.have_last_block = true;
+    let mut one_byte = [0u8; 1];
+    if repeated_output.generate(&mut one_byte)
+        == Err(EntropyError::ContinuousHealthTestFailed)
+        && repeated_output.generate(&mut one_byte) == Err(EntropyError::GeneratorFailed)
+    {
+        passed += 1;
+    }
+
+    let mut exhausted = HmacDrbg::new(&seed);
+    exhausted.requests = RESEED_INTERVAL;
+    if exhausted.generate(&mut one_byte) == Err(EntropyError::ReseedRequired)
+        && exhausted.generate(&mut one_byte) == Err(EntropyError::GeneratorFailed)
+    {
+        passed += 1;
+    }
+
     zeroize_buf(&mut seed);
     zeroize_buf(&mut first);
     zeroize_buf(&mut second);
     zeroize_buf(&mut repeated_blocks);
     zeroize_buf(&mut repeated_words);
+    zeroize_buf(&mut one_byte);
 
     (passed, total)
 }
